@@ -4,14 +4,13 @@ Pipeline para processamento de nuvens de pontos de árvores de eucalipto.
 
 Este repositório integra, de forma reprodutível, os seguintes blocos:
 
-- Isolamento e segmentação semântica de árvores com **ForestFormer3D / FF3D_inference** (via Docker).
-- Isolamento de árvores com **treeiso** (artemis_treeiso) quando já existem rótulos de árvores.
+- Isolamento de árvores com **treeiso** ([artemis_treeiso](https://github.com/truebelief/artemis_treeiso))
+- Isolamento e segmentação semântica de árvores com **ForestFormer3D / FF3D_inference** (via Docker) —
+	[ForestFormer3D](https://github.com/SmartForest-no/ForestFormer3D) e
+	[FF3D_inference](https://github.com/bxiang233/FF3D_inference/tree/main/ff3d_forestsens).
 - Extração heurística de tronco (quando não há classe semântica de tronco).
-- Cálculo de **DAP (DBH)** por métodos robustos (ensemble de slices com RANSAC).
+- Cálculo de **DAP (DBH)** por métodos geométricos (ensemble de slices com RANSAC).
 - Estimativa de **volume de tronco** usando o modelo de cilindro (método padrão) e estrutura para outros métodos.
-
-Toda a lógica reutilizável fica no pacote interno `eucalipto/` e o fluxo padrão hoje é
-orquestrado pelo script `run_ff3d_pipeline.py`.
 
 ---
 
@@ -20,19 +19,22 @@ orquestrado pelo script `run_ff3d_pipeline.py`.
 - `eucalipto/io.py`: leitura/escrita de LAS/LAZ/PLY, normalização, altura da árvore.
 - `eucalipto/isolation_ff3d.py`: wrapper para o **FF3D_inference** via Docker, incluindo
 	extração direta dos pontos de tronco usando o rótulo semântico de tronco.
-- `eucalipto/isolation_treeiso.py`: helpers para separar a nuvem por `treeID` (pensando em integração
-	futura com o **treeiso**/artemis_treeiso).
+- `eucalipto/isolation_treeiso.py`: helpers para separar a nuvem por `treeID` ou `final_segs` e função
+	para chamar diretamente o algoritmo original do **treeiso**/artemis_treeiso sobre um diretório.
 - `eucalipto/trunk_heuristic.py`: heurística de identificação de tronco (PCA global, distância ao eixo,
 	linearidade, scattering, componente conectada). Usado na rota treeiso.
 - `eucalipto/dbh_methods.py`: métodos de cálculo de DAP (RANSAC em fatia única, least squares e
 	**ensemble multi‑slice**, que é o padrão recomendado).
 - `eucalipto/volume_methods.py`: métodos de volume; atualmente o fluxo de produção usa
-	**modelo de cilindro** a partir de DAP + altura.
+	**modelo de cilindro** a partir de DAP + altura, mas também há opções de
+	**integração da curva de taper** (r(h)) e **frustum** (cone truncado) com
+	raios estimados na base e no topo.
 - `eucalipto/pipeline_core.py`: funções de alto nível para:
 	- rodar isolamento (FF3D ou treeiso),
 	- extrair tronco (semântico ou heurístico),
 	- calcular DAP e volume para cada árvore.
 - `run_ff3d_pipeline.py`: script principal de exemplo usando FF3D como fonte de isolamento + tronco.
+- `run_treeiso_pipeline.py`: script de exemplo usando treeiso + heurística de tronco.
 
 ---
 
@@ -40,9 +42,12 @@ orquestrado pelo script `run_ff3d_pipeline.py`.
 
 O projeto assume que, no mesmo nível deste repositório, existem os diretórios (já clonados):
 
-- `FF3D_inference/` (repositório com o wrapper Docker de inferência).
-- `ForestFormer3D/` (repositório principal da rede, usado indiretamente pelo FF3D_inference).
-- `artemis_treeiso/` (treeiso; usado hoje principalmente como referência e para fluxos futuros).
+- `FF3D_inference/` — wrapper Docker de inferência do ForestFormer3D
+	- GitHub: <https://github.com/bxiang233/FF3D_inference/tree/main/ff3d_forestsens>
+- `ForestFormer3D/` — repositório principal da rede FF3D
+	- GitHub: <https://github.com/SmartForest-no/ForestFormer3D>
+- `artemis_treeiso/` — implementação do algoritmo treeiso
+	- GitHub: <https://github.com/truebelief/artemis_treeiso>
 
 Além disso, as bibliotecas Python principais usadas pelo pacote `eucalipto` incluem, entre outras:
 
@@ -122,24 +127,34 @@ O fluxo considerado mais estável atualmente é:
 
 ## Fluxos alternativos (treeiso + heurística de tronco)
 
-Já existem módulos para suportar um fluxo baseado em **treeiso** + heurística de tronco:
+Além do fluxo FF3D, o repositório já implementa um pipeline baseado em
+**treeiso** + heurística de tronco:
 
-- `eucalipto.isolation_treeiso`: separa as árvores a partir de um campo `treeID`.
+- `eucalipto.isolation_treeiso`:
+	- função `run_treeiso_on_dir` chama diretamente o algoritmo original do
+	  treeiso (artemis_treeiso) sobre um diretório de arquivos LAS/LAZ,
+	  gerando arquivos `*_treeiso.laz` com o campo `final_segs`;
+	- função `split_by_tree_id` permite separar uma nuvem por um campo de ID
+	  (por exemplo `treeID` ou `final_segs`).
 - `eucalipto.trunk_heuristic`: aplica a heurística baseada em PCA local/global para
 	separar tronco de folhas em cada árvore.
 
-Um script análogo ao `run_ff3d_pipeline.py` pode ser criado usando as funções de
-`pipeline_core` para orquestrar esse caminho. Neste momento, o fluxo FF3D é o
-**padrão recomendado** por ser mais estável e já incorporar a segmentação
-semântica de tronco.
+O script `run_treeiso_pipeline.py` demonstra esse fluxo completo:
+
+1. Roda o treeiso em todos os arquivos de `INPUT_DIR`, gerando `*_treeiso.laz`.
+2. Usa `final_segs` para agrupar pontos por árvore/segmento.
+3. Aplica a heurística de tronco em cada árvore.
+4. Calcula DAP (ensemble) e volume (cilindro) para cada tronco.
+5. Gera um CSV resumo em `results_treeiso/treeiso_metrics_summary.csv`.
+
+Mesmo com os dois caminhos implementados, o fluxo FF3D continua sendo o
+**padrão recomendado** quando disponível, por já trazer a segmentação
+semântica de tronco diretamente da rede.
 
 ---
 
 ## Futuras extensões
 
-- Integração mais direta com o código do **treeiso** (artemis_treeiso) para cenários
-	sem rótulos prévios de árvore.
-- Implementação de métodos adicionais de volume (taper, frustum, QSM via PyTLidar)
-	a partir do código existente nos notebooks.
+- Implementação de volume via QSM (PyTLidar) integrado ao pipeline.
 - Criação de uma CLI única (por exemplo, `eucalipto run --config config.yaml`) sobre
 	os módulos já implementados.

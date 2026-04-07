@@ -36,9 +36,12 @@ BUCKET_OUT_DIR = "/home/matheuspimenta/Jobs/Eucalipto/FF3D_inference/FF3D_oracle
 INPUT_LAZ = "/path/to/your/input.laz"  # TODO: set this
 
 # Names of FF3D dimensions and trunk label value
-INSTANCE_DIM = "instance_id"   # adjust to actual FF3D output
-SEMANTIC_DIM = "sem_label"     # adjust to actual FF3D output
-TRUNK_LABEL = 1                 # integer label corresponding to trunk class
+# Por padrão, assumimos a convenção do ForestFormer:
+#  - treeID: identificador de árvore (instância)
+#  - semantic_seg: rótulo semântico (tronco, folha, etc.)
+INSTANCE_DIM = "treeID"        # campo de instância/árvore
+SEMANTIC_DIM = "semantic_seg"  # campo de segmentação semântica
+TRUNK_LABEL = 1                 # rótulo inteiro correspondente à classe tronco
 
 # Output directory inside projeto_eucalipto
 RESULTS_DIR = "results_ff3d"

@@ -1,16 +1,23 @@
-"""Tree isolation helpers for treeiso (artemis_treeiso).
+"""Integração com treeiso (artemis_treeiso).
 
-At this stage we do not call the full treeiso framework directly.
-Instead, this module focuses on splitting an input cloud by an
-existing tree identifier dimension (e.g. treeID from FOR-Instance).
+Fornece duas funcionalidades principais:
 
-Integration with artemis_treeiso's algorithms can be added here later
-when a stable programmatic API or CLI contract is defined.
+1) Executar o algoritmo original do treeiso em um diretório de
+    arquivos LAS/LAZ, chamando ``process_las_file`` do próprio
+    repositório artemis_treeiso.
+2) A partir de um LAS/LAZ que já possua um identificador de árvore
+    (por exemplo, ``treeID`` ou ``final_segs``), separar a nuvem em
+    uma nuvem por árvore/segmento.
 """
 
 from __future__ import annotations
 
-from typing import Dict
+from typing import Dict, List
+
+import glob
+import importlib
+import os
+import sys
 
 import numpy as np
 
@@ -45,3 +52,35 @@ def split_by_tree_id(path: str,
         per_tree.setdefault(int(tid), []).append(p)
 
     return {tid: np.vstack(pts) for tid, pts in per_tree.items() if len(pts) > 0}
+
+
+def run_treeiso_on_dir(treeiso_repo_dir: str,
+                       input_dir: str) -> List[str]:
+    """Executa o treeiso sobre todos os LAS/LAZ de um diretório.
+
+    Esta função insere o diretório PythonCpp do repositório
+    artemis_treeiso no ``sys.path`` e importa o módulo ``treeiso``
+    original, chamando ``process_las_file`` para cada arquivo
+    ``*.las``/``*.laz`` encontrado em ``input_dir``.
+
+    Retorna a lista de caminhos dos arquivos gerados com sufixo
+    ``*_treeiso.laz``.
+    """
+
+    pythoncpp_dir = os.path.join(treeiso_repo_dir, "PythonCpp")
+    if pythoncpp_dir not in sys.path:
+        sys.path.insert(0, pythoncpp_dir)
+
+    treeiso_mod = importlib.import_module("treeiso")
+
+    pattern = os.path.join(input_dir, "*.la[sz]")
+    input_paths = sorted(glob.glob(pattern))
+
+    output_paths: List[str] = []
+    for path_to_las in input_paths:
+        treeiso_mod.process_las_file(path_to_las)
+        out_path = path_to_las[:-4] + "_treeiso.laz"
+        if os.path.exists(out_path):
+            output_paths.append(out_path)
+
+    return output_paths
