@@ -4,7 +4,9 @@ Métodos atualmente implementados:
 
 - Cilindro simples (DAP + altura);
 - Integração da curva de afilamento (taper) ajustada por polinômio;
-- Frustum (cone truncado) com raios estimados na base e topo.
+- Frustum (cone truncado) com raios estimados na base e topo;
+- Volume a partir de QSM ("qsm"), delegando o ajuste do modelo a
+    bibliotecas externas como PyTLidar / TreeQSM.
 
 O método de cilindro continua sendo o padrão mais estável.
 """
@@ -212,6 +214,65 @@ def estimate_volume_frustum(points: np.ndarray,
     return info
 
 
+def estimate_volume_qsm(points: np.ndarray,
+                        wood_density_kg_m3: Optional[float] = None,
+                        qsm_volume_func=None,
+                        **kwargs) -> dict:
+    """Estimate volume using a QSM-based approach (e.g. via PyTLidar).
+
+    Parameters
+    ----------
+    points : np.ndarray
+        Nuvem de pontos (idealmente tronco + galhos principais) em metros.
+    wood_density_kg_m3 : float, optional
+        Densidade da madeira para estimar massa (se desejado).
+    qsm_volume_func : callable
+        Função externa responsável por ajustar o QSM e retornar o volume.
+        A assinatura esperada é::
+
+            def qsm_volume_func(points: np.ndarray, **kwargs) -> float | tuple:
+                ""Retorna volume_m3 ou (volume_m3, info_dict).""
+
+        Isso permite integrar PyTLidar (TreeQSM) ou outras bibliotecas sem
+        acoplar diretamente o pacote aqui.
+
+    Returns
+    -------
+    info : dict
+        Dicionário com volume, massa (opcional) e metadados do QSM.
+    """
+    if qsm_volume_func is None:
+        raise ValueError(
+            "Para usar o método de volume 'qsm' é necessário fornecer "
+            "um 'qsm_volume_func' que ajuste o modelo (por exemplo, "
+            "via PyTLidar/TreeQSM) e retorne o volume em m³."
+        )
+
+    res = qsm_volume_func(points, **kwargs)
+
+    qsm_info = None
+    if isinstance(res, tuple) and len(res) == 2:
+        volume_m3, qsm_info = res
+    else:
+        volume_m3 = res
+
+    volume_m3 = float(volume_m3)
+    volume_liters = float(volume_m3 * 1000.0)
+
+    info = {
+        "dbh_cm": None,
+        "height_m": None,
+        "volume_m3": volume_m3,
+        "volume_liters": volume_liters,
+        "qsm_info": qsm_info,
+    }
+
+    if wood_density_kg_m3 is not None:
+        info["mass_kg"] = float(volume_m3 * wood_density_kg_m3)
+
+    return info
+
+
 def estimate_volume(points,
                     dbh_cm: Optional[float] = None,
                     height_m: Optional[float] = None,
@@ -219,12 +280,14 @@ def estimate_volume(points,
                     **kwargs) -> dict:
     """High-level volume estimator.
 
-        Actualmente suporta três métodos principais:
+        Actualmente suporta quatro métodos principais:
 
         - "cylinder": modelo de cilindro usando DAP + altura;
         - "taper": integração da curva de afilamento r(h) estimada por fatias;
         - "frustum": modelo de tronco como frustum (cone truncado) com raios
-            estimados na base e topo.
+            estimados na base e topo;
+        - "qsm": volume a partir de um modelo QSM ajustado externamente
+            (ex.: PyTLidar / TreeQSM) via ``qsm_volume_func``.
 
     Parameters
     ----------
@@ -234,7 +297,7 @@ def estimate_volume(points,
     dbh_cm : float, optional
     height_m : float, optional
     method : str
-        Um de {"cylinder", "taper", "frustum"}.
+        Um de {"cylinder", "taper", "frustum", "qsm"}.
 
     Returns
     -------
@@ -255,5 +318,8 @@ def estimate_volume(points,
 
     if method == "frustum":
         return estimate_volume_frustum(points, **kwargs)
+
+    if method == "qsm":
+        return estimate_volume_qsm(points, **kwargs)
 
     raise ValueError(f"Método de volume não suportado: {method}")

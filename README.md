@@ -10,7 +10,8 @@ Este repositório integra, de forma reprodutível, os seguintes blocos:
 	[FF3D_inference](https://github.com/bxiang233/FF3D_inference/tree/main/ff3d_forestsens).
 - Extração heurística de tronco (quando não há classe semântica de tronco).
 - Cálculo de **DAP (DBH)** por métodos geométricos (ensemble de slices com RANSAC).
-- Estimativa de **volume de tronco** usando o modelo de cilindro (método padrão) e estrutura para outros métodos.
+- Estimativa de **volume de tronco** usando o modelo de cilindro (método padrão),
+	além de métodos alternativos (taper, frustum e QSM via PyTLidar/TreeQSM).
 
 ---
 
@@ -22,13 +23,15 @@ Este repositório integra, de forma reprodutível, os seguintes blocos:
 - `eucalipto/isolation_treeiso.py`: helpers para separar a nuvem por `treeID` ou `final_segs` e função
 	para chamar diretamente o algoritmo original do **treeiso**/artemis_treeiso sobre um diretório.
 - `eucalipto/trunk_heuristic.py`: heurística de identificação de tronco (PCA global, distância ao eixo,
-	linearidade, scattering, componente conectada). Usado na rota treeiso.
+	linearidade, scattering, componente conectada). Usado no fluxo com o treeiso.
 - `eucalipto/dbh_methods.py`: métodos de cálculo de DAP (RANSAC em fatia única, least squares e
 	**ensemble multi‑slice**, que é o padrão recomendado).
 - `eucalipto/volume_methods.py`: métodos de volume; atualmente o fluxo de produção usa
 	**modelo de cilindro** a partir de DAP + altura, mas também há opções de
-	**integração da curva de taper** (r(h)) e **frustum** (cone truncado) com
-	raios estimados na base e no topo.
+	**integração da curva de taper** (r(h)), **frustum** (cone truncado) com
+	raios estimados na base e no topo, e um método **QSM** ("qsm") que delega o
+	ajuste do modelo a bibliotecas externas (PyTLidar/TreeQSM) via
+	``qsm_volume_func``.
 - `eucalipto/pipeline_core.py`: funções de alto nível para:
 	- rodar isolamento (FF3D ou treeiso),
 	- extrair tronco (semântico ou heurístico),
@@ -144,17 +147,9 @@ O script `run_treeiso_pipeline.py` demonstra esse fluxo completo:
 1. Roda o treeiso em todos os arquivos de `INPUT_DIR`, gerando `*_treeiso.laz`.
 2. Usa `final_segs` para agrupar pontos por árvore/segmento.
 3. Aplica a heurística de tronco em cada árvore.
-4. Calcula DAP (ensemble) e volume (cilindro) para cada tronco.
+4. Calcula DAP (ensemble) e volume (cilindro, por padrão) para cada tronco.
 5. Gera um CSV resumo em `results_treeiso/treeiso_metrics_summary.csv`.
 
 Mesmo com os dois caminhos implementados, o fluxo FF3D continua sendo o
 **padrão recomendado** quando disponível, por já trazer a segmentação
 semântica de tronco diretamente da rede.
-
----
-
-## Futuras extensões
-
-- Implementação de volume via QSM (PyTLidar) integrado ao pipeline.
-- Criação de uma CLI única (por exemplo, `eucalipto run --config config.yaml`) sobre
-	os módulos já implementados.
