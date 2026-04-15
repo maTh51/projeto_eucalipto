@@ -22,6 +22,8 @@ Este repositório integra, de forma reprodutível, os seguintes blocos:
 	extração direta dos pontos de tronco usando o rótulo semântico de tronco.
 - `eucalipto/isolation_treeiso.py`: helpers para separar a nuvem por `treeID` ou `final_segs` e função
 	para chamar diretamente o algoritmo original do **treeiso**/artemis_treeiso sobre um diretório.
+- `eucalipto/preprocess_treeiso.py`: preparação de entrada para o treeiso (PLY->LAZ, filtro de chão por
+	pré-segmentação e staging de arquivos filtrados para execução).
 - `eucalipto/trunk_heuristic.py`: heurística de identificação de tronco (PCA global, distância ao eixo,
 	linearidade, scattering, componente conectada). Usado no fluxo com o treeiso.
 - `eucalipto/dbh_methods.py`: métodos de cálculo de DAP (RANSAC em fatia única, least squares e

@@ -55,7 +55,8 @@ def split_by_tree_id(path: str,
 
 
 def run_treeiso_on_dir(treeiso_repo_dir: str,
-                       input_dir: str) -> List[str]:
+                       input_dir: str,
+                       force_python_cut_pursuit: bool = False) -> List[str]:
     """Executa o treeiso sobre todos os LAS/LAZ de um diretório.
 
     Esta função insere o diretório PythonCpp do repositório
@@ -73,8 +74,37 @@ def run_treeiso_on_dir(treeiso_repo_dir: str,
 
     treeiso_mod = importlib.import_module("treeiso")
 
-    pattern = os.path.join(input_dir, "*.la[sz]")
-    input_paths = sorted(glob.glob(pattern))
+    if force_python_cut_pursuit:
+        try:
+            cut_pursuit_py_mod = importlib.import_module("cut_pursuit_L0")
+            treeiso_mod.perform_cut_pursuit = cut_pursuit_py_mod.perform_cut_pursuit
+            if hasattr(treeiso_mod, "USE_CPP"):
+                treeiso_mod.USE_CPP = False
+            print("Forçando backend Python do cut-pursuit (cut_pursuit_L0).")
+        except Exception as exc:
+            raise RuntimeError(
+                "Falha ao forçar backend Python do cut-pursuit. "
+                "Verifique se cut_pursuit_L0.py está disponível no diretório PythonCpp."
+            ) from exc
+
+    if not os.path.exists(input_dir):
+        raise FileNotFoundError(f"Input path not found: {input_dir}")
+
+    if os.path.isdir(input_dir):
+        pattern = os.path.join(input_dir, "*.la[sz]")
+        input_paths = sorted(glob.glob(pattern))
+    else:
+        ext = os.path.splitext(input_dir)[1].lower()
+        if ext not in {".las", ".laz"}:
+            raise ValueError(
+                "Input path must be a directory with LAS/LAZ files or a single .las/.laz file. "
+                f"Received: {input_dir}"
+            )
+        input_paths = [input_dir]
+
+    if len(input_paths) == 0:
+        print(f"No LAS/LAZ files found in input path: {input_dir}")
+        return []
 
     output_paths: List[str] = []
     for path_to_las in input_paths:
