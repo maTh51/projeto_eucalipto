@@ -1,0 +1,44 @@
+services:
+  run_ff3d_full:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    working_dir: /workspace
+    command: bash -lc "python run_pipeline.py configs/ff3d_full.yaml"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./:/workspace
+      - ./data:/workspace/data
+      - ./results:/workspace/results
+      - /var/run/docker.sock:/var/run/docker.sock
+    profiles: ["ff3d_full"]
+
+  run_treeiso_leafwood:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    working_dir: /workspace
+    command: bash -lc "python run_pipeline.py configs/treeiso_leafwood.yaml"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./:/workspace
+      - ./data:/workspace/data
+      - ./results:/workspace/results
+      - /var/run/docker.sock:/var/run/docker.sock
+    profiles: ["treeiso_leafwood"]
+
+  run_rayextract_full:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    working_dir: /workspace
+    command: bash -lc "python run_pipeline.py configs/rayextract_full.yaml"
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./:/workspace
+      - ./data:/workspace/data
+      - ./results:/workspace/results
+    profiles: ["rayextract_full"]

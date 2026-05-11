@@ -1,0 +1,37 @@
+schema_version: "1.0.0"
+pipeline_mode: "treeiso_leafwood"
+input:
+  path: "/home/matheuspimenta/Jobs/Eucalipto/drive/custom/CULS_CULS_plot_2_annotated_test.ply"
+  format: "auto"
+output:
+  output_dir: "results/treeiso_leafwood"
+  cloud_format: "laz"
+runtime:
+  docker_compose_profile: "treeiso_leafwood"
+  use_gpu: true
+  retries: 0
+failure_policy:
+  on_isolation_error: "abort"
+  on_segmentation_error: "abort"
+  on_metrics_error: "mark_partial"
+providers:
+  treeiso:
+    tree_id_dim: "final_segs"
+    force_python_cut_pursuit: true
+    pre_filter_enabled: true
+    pre_filter_dim: "treeID"
+    pre_filter_ground_value: 0
+  leafwood:
+    docker_subdir: "docker"
+    docker_service: "open3dml"
+    model_ckpt: "/project/model_weights/weights_randlanet.pth"
+    device: "cuda"
+    batch_size: 1
+  metrics:
+    wood_density_kg_m3: 900.0
+external_paths:
+  ff3d_inference: "/home/matheuspimenta/Jobs/Eucalipto/FF3D_inference/ff3d_forestsens"
+  forestformer3d: "/home/matheuspimenta/Jobs/Eucalipto/ForestFormer3D"
+  treeiso: "/home/matheuspimenta/Jobs/Eucalipto/artemis_treeiso"
+  leafwood: "/home/matheuspimenta/Jobs/Eucalipto/leaf-wood-segmentation-with-deep-learning"
+  rayextract_manual: "/home/matheuspimenta/Jobs/Eucalipto/rayextract-manual"

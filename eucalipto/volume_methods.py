@@ -3,8 +3,10 @@
 Métodos atualmente implementados:
 
 - Cilindro simples (DAP + altura);
+- Voxelização do tronco por ocupação de voxels;
 - Integração da curva de afilamento (taper) ajustada por polinômio;
 - Frustum (cone truncado) com raios estimados na base e topo;
+- Perfil radial robusto por fatias (reconstrução geométrica com filtro de distância);
 - Volume a partir de QSM ("qsm"), delegando o ajuste do modelo a
     bibliotecas externas como PyTLidar / TreeQSM.
 
@@ -16,6 +18,123 @@ from typing import Optional, Tuple, List
 import numpy as np
 from scipy.integrate import quad
 import pyransac3d as pyrsc
+
+
+def estimate_volume_axis_profile(points: np.ndarray,
+                                 n_slices: int = 20,
+                                 slice_thickness: float = 0.30,
+                                 radius_percentile: float = 85.0,
+                                 min_points_per_slice: int = 20,
+                                 wood_density_kg_m3: Optional[float] = None) -> dict:
+    """Estimate volume by reconstructing a robust radial profile along height.
+
+    The profile is built from horizontal slices. For each slice, the center is
+    estimated with median XY and the radius is taken from a robust percentile of
+    radial distances. This approach tolerates sparse holes in trunk predictions.
+    """
+    if points is None or points.shape[0] < 10:
+        raise ValueError("Insufficient points for 'axis_profile' volume estimation.")
+
+    z = points[:, 2]
+    z_min = float(z.min())
+    z_max = float(z.max())
+    height_m = z_max - z_min
+    if height_m <= 0:
+        raise ValueError("Invalid trunk height for 'axis_profile' volume estimation.")
+
+    centers = np.linspace(z_min, z_max, n_slices)
+    hs: List[float] = []
+    rs: List[float] = []
+
+    for zc in centers:
+        sl = _slice_points(points, z_center=float(zc), thickness=slice_thickness)
+        if sl.shape[0] < min_points_per_slice:
+            continue
+
+        ctr = np.median(sl[:, :2], axis=0)
+        d = np.linalg.norm(sl[:, :2] - ctr, axis=1)
+        r = float(np.percentile(d, radius_percentile))
+        if r <= 0:
+            continue
+
+        hs.append(float(zc - z_min))
+        rs.append(r)
+
+    if len(rs) < 2:
+        raise ValueError("Insufficient valid slices for 'axis_profile' volume estimation.")
+
+    h_arr = np.asarray(hs)
+    r_arr = np.asarray(rs)
+
+    order = np.argsort(h_arr)
+    h_arr = h_arr[order]
+    r_arr = r_arr[order]
+
+    # Numerical integration of area profile A(h)=pi*r(h)^2 using trapezoids.
+    area = np.pi * (r_arr ** 2)
+    volume_m3 = float(np.trapz(area, h_arr))
+    volume_liters = float(volume_m3 * 1000.0)
+
+    info = {
+        "dbh_cm": None,
+        "height_m": float(height_m),
+        "volume_m3": volume_m3,
+        "volume_liters": volume_liters,
+        "axis_profile_slices_used": int(len(r_arr)),
+        "axis_profile_radius_percentile": float(radius_percentile),
+    }
+
+    if wood_density_kg_m3 is not None:
+        info["mass_kg"] = float(volume_m3 * wood_density_kg_m3)
+
+    return info
+
+
+def estimate_volume_voxel(points: np.ndarray,
+                          voxel_size: float = 0.05,
+                          wood_density_kg_m3: Optional[float] = None) -> dict:
+    """Estimate volume by counting occupied voxels in the trunk point cloud.
+
+    The trunk points are quantized into a regular voxel grid anchored at the
+    local minimum XYZ of the cloud. The estimated volume is the number of
+    occupied voxels multiplied by the voxel volume.
+    """
+    if points is None or points.shape[0] < 3:
+        raise ValueError("Insufficient points for 'voxel' volume estimation.")
+
+    if voxel_size <= 0:
+        raise ValueError("voxel_size must be > 0 for 'voxel' volume estimation.")
+
+    pts = np.asarray(points, dtype=np.float64)
+    origin = pts.min(axis=0)
+    voxel_indices = np.floor((pts - origin) / float(voxel_size)).astype(np.int64)
+
+    unique_voxels = np.unique(voxel_indices, axis=0)
+    occupied_voxels = int(unique_voxels.shape[0])
+    voxel_volume = float(voxel_size ** 3)
+    volume_m3 = float(occupied_voxels * voxel_volume)
+    volume_liters = float(volume_m3 * 1000.0)
+
+    bbox_extent = pts.max(axis=0) - origin
+    bbox_voxels = int(np.prod(np.maximum(np.ceil(bbox_extent / voxel_size).astype(np.int64), 1)))
+    fill_ratio = float(occupied_voxels / bbox_voxels) if bbox_voxels > 0 else 0.0
+
+    info = {
+        "dbh_cm": None,
+        "height_m": float(pts[:, 2].max() - pts[:, 2].min()),
+        "volume_m3": volume_m3,
+        "volume_liters": volume_liters,
+        "voxel_size_m": float(voxel_size),
+        "voxel_occupied_count": occupied_voxels,
+        "voxel_bbox_count_estimate": bbox_voxels,
+        "voxel_fill_ratio": fill_ratio,
+        "voxel_origin_xyz": origin.tolist(),
+    }
+
+    if wood_density_kg_m3 is not None:
+        info["mass_kg"] = float(volume_m3 * wood_density_kg_m3)
+
+    return info
 
 
 def estimate_volume_cylinder(dbh_cm: float,
@@ -283,9 +402,11 @@ def estimate_volume(points,
         Actualmente suporta quatro métodos principais:
 
         - "cylinder": modelo de cilindro usando DAP + altura;
+        - "voxel": ocupação de voxels no tronco;
         - "taper": integração da curva de afilamento r(h) estimada por fatias;
         - "frustum": modelo de tronco como frustum (cone truncado) com raios
             estimados na base e topo;
+        - "axis_profile": reconstrução por perfil radial robusto em fatias;
         - "qsm": volume a partir de um modelo QSM ajustado externamente
             (ex.: PyTLidar / TreeQSM) via ``qsm_volume_func``.
 
@@ -297,7 +418,7 @@ def estimate_volume(points,
     dbh_cm : float, optional
     height_m : float, optional
     method : str
-        Um de {"cylinder", "taper", "frustum", "qsm"}.
+        Um de {"cylinder", "voxel", "taper", "frustum", "axis_profile", "qsm"}.
 
     Returns
     -------
@@ -310,6 +431,9 @@ def estimate_volume(points,
             raise ValueError("dbh_cm e height_m são necessários para volume 'cylinder'.")
         return estimate_volume_cylinder(dbh_cm, height_m, **kwargs)
 
+    if method == "voxel":
+        return estimate_volume_voxel(points, **kwargs)
+
     if points is None:
         raise ValueError("O método de volume selecionado requer os pontos do tronco.")
 
@@ -318,6 +442,9 @@ def estimate_volume(points,
 
     if method == "frustum":
         return estimate_volume_frustum(points, **kwargs)
+
+    if method == "axis_profile":
+        return estimate_volume_axis_profile(points, **kwargs)
 
     if method == "qsm":
         return estimate_volume_qsm(points, **kwargs)

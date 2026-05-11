@@ -1,0 +1,32 @@
+schema_version: "1.0.0"
+pipeline_mode: "ff3d_full"
+input:
+  path: "/home/matheuspimenta/Jobs/Eucalipto/drive/custom/CULS_CULS_plot_1_annotated_train.ply"
+  format: "auto"
+output:
+  output_dir: "results/ff3d_full"
+  cloud_format: "laz"
+runtime:
+  docker_compose_profile: "ff3d"
+  use_gpu: true
+  retries: 0
+failure_policy:
+  on_isolation_error: "abort"
+  on_segmentation_error: "abort"
+  on_metrics_error: "mark_partial"
+providers:
+  ff3d:
+    instance_dim: "instance_pred"
+    semantic_dim: "semantic_pred"
+    trunk_label: 1
+    bucket_in_dir: "/path/to/FF3D_oracle/bucket_in_folder"
+    bucket_out_dir: "/path/to/FF3D_oracle/bucket_out_folder"
+  metrics:
+    wood_density_kg_m3: 900.0
+external_paths:
+  ff3d_inference: "/home/matheuspimenta/Jobs/Eucalipto/FF3D_inference/ff3d_forestsens"
+  forestformer3d: "/home/matheuspimenta/Jobs/Eucalipto/ForestFormer3D"
+  treeiso: "/home/matheuspimenta/Jobs/Eucalipto/artemis_treeiso"
+  leafwood: "/home/matheuspimenta/Jobs/Eucalipto/leaf-wood-segmentation-with-deep-learning"
+  rayextract_manual: "/home/matheuspimenta/Jobs/Eucalipto/rayextract-manual"
+

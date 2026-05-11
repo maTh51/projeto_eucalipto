@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import Dict, Tuple, Optional
 
 import laspy
@@ -122,3 +123,52 @@ def tree_height(points: np.ndarray) -> float:
     """Return approximate tree height as max(z) - min(z)."""
     z = points[:, 2]
     return float(z.max() - z.min())
+
+
+def load_ply(path: str) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    """Load a PLY cloud and return (points, extras)."""
+    ply = PlyData.read(path)
+    vertex = ply["vertex"]
+
+    points = np.vstack((vertex["x"], vertex["y"], vertex["z"])).T.astype(np.float64)
+    extras: Dict[str, np.ndarray] = {}
+
+    for name in vertex.data.dtype.names:
+        if name in {"x", "y", "z"}:
+            continue
+        extras[name] = np.asarray(vertex[name])
+
+    return points, extras
+
+
+def save_ply_with_fields(path: str, points: np.ndarray, extras: Dict[str, np.ndarray]) -> None:
+    """Write a PLY cloud with arbitrary scalar fields."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+
+    dtype = [("x", "f8"), ("y", "f8"), ("z", "f8")]
+    for name, values in extras.items():
+        if values.dtype.kind in {"i", "u"}:
+            dtype.append((name, "i4"))
+        else:
+            dtype.append((name, "f4"))
+
+    vertex = np.empty(points.shape[0], dtype=dtype)
+    vertex["x"] = points[:, 0]
+    vertex["y"] = points[:, 1]
+    vertex["z"] = points[:, 2]
+    for name, values in extras.items():
+        vertex[name] = values
+
+    PlyData([PlyElement.describe(vertex, "vertex")], text=False).write(path)
+
+
+def load_cloud_auto(path: str) -> Tuple[np.ndarray, Dict[str, np.ndarray], str]:
+    """Load LAZ/LAS/PLY using extension and return format label."""
+    ext = Path(path).suffix.lower()
+    if ext in {".laz", ".las"}:
+        pts, extras = load_laz(path)
+        return pts, extras, ext.lstrip(".")
+    if ext == ".ply":
+        pts, extras = load_ply(path)
+        return pts, extras, "ply"
+    raise ValueError(f"Unsupported input format: {path}")

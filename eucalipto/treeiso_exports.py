@@ -22,7 +22,8 @@ def save_classified_cloud_laz(output_path: str,
                               wood_score: np.ndarray,
                               dist_axis: np.ndarray,
                               dbh_cm_tree: np.ndarray,
-                              volume_m3_tree: np.ndarray) -> None:
+                              volume_m3_tree: np.ndarray,
+                              extra_fields: Dict[str, np.ndarray] | None = None) -> None:
     """Save per-point classification and metrics in a LAZ file."""
     extras = {
         "tree_segment_id": np.asarray(tree_segment_id, dtype=np.int32),
@@ -32,6 +33,9 @@ def save_classified_cloud_laz(output_path: str,
         "dbh_cm_tree": np.asarray(dbh_cm_tree, dtype=np.float32),
         "volume_m3_tree": np.asarray(volume_m3_tree, dtype=np.float32),
     }
+    if extra_fields:
+        for key, values in extra_fields.items():
+            extras[key] = np.asarray(values)
     eio.save_laz(output_path, points, extras=extras)
 
 
