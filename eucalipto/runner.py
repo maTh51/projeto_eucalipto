@@ -307,9 +307,51 @@ def _run_rayextract_full(cfg: PipelineConfig) -> tuple[np.ndarray, np.ndarray, n
 
     _run_cmd_try_local_then_docker(["rayimport", str(pcd_path), "ray", "0,0,-1", "--max_intensity", "0"])
     raycloud = work_dir / f"{pcd_path.stem}_raycloud.ply"
-    _run_cmd_try_local_then_docker(["rayextract", "terrain", str(raycloud)])
+    
+    # Build rayextract terrain command with optional parameters
+    terrain_cmd = ["rayextract", "terrain", str(raycloud)]
+    if "gradient" in rct_cfg:
+        terrain_cmd.extend(["--gradient", str(rct_cfg["gradient"])])
+    _run_cmd_try_local_then_docker(terrain_cmd)
+    
     terrain = work_dir / f"{pcd_path.stem}_raycloud_mesh.ply"
-    _run_cmd_try_local_then_docker(["rayextract", "trees", str(raycloud), str(terrain)])
+    
+    # Build rayextract trees command with optional parameters
+    trees_cmd = ["rayextract", "trees", str(raycloud), str(terrain)]
+    
+    # Map config keys to rayextract command-line flags (value parameters)
+    value_params = {
+        "max_diameter": "--max_diameter",
+        "crop_length": "--crop_length",
+        "height_min": "--height_min",
+        "girth_height_ratio": "--girth_height_ratio",
+        "gravity_factor": "--gravity_factor",
+        "global_taper": "--global_taper",
+        "global_taper_factor": "--global_taper_factor",
+        "distance_limit": "--distance_limit",
+        "grid_width": "--grid_width",
+    }
+    
+    # Flag parameters (boolean, no value needed)
+    flag_params = {
+        "branch_segmentation": "--branch_segmentation",
+        "use_rays": "--use_rays",
+    }
+    
+    for config_key, cli_flag in value_params.items():
+        if config_key in rct_cfg:
+            value = rct_cfg[config_key]
+            # Skip if value is a boolean (invalid for value parameters)
+            if isinstance(value, bool):
+                continue
+            trees_cmd.append(cli_flag)
+            trees_cmd.append(str(value))
+    
+    for config_key, cli_flag in flag_params.items():
+        if config_key in rct_cfg and rct_cfg[config_key]:
+            trees_cmd.append(cli_flag)
+    
+    _run_cmd_try_local_then_docker(trees_cmd)
 
     segmented = work_dir / f"{pcd_path.stem}_raycloud_segmented.ply"
     points, extras = io.load_ply(str(segmented))

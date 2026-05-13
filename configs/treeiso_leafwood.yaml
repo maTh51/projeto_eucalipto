@@ -4,7 +4,7 @@ input:
   path: "/home/matheuspimenta/Jobs/Eucalipto/drive/custom/CULS_CULS_plot_2_annotated_test.ply"
   format: "auto"
 output:
-  output_dir: "results/treeiso_leafwood"
+  output_dir: "results/canoa/treeiso_leafwood"
   cloud_format: "laz"
 runtime:
   docker_compose_profile: "treeiso_leafwood"

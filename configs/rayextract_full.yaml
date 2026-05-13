@@ -1,10 +1,10 @@
 schema_version: "1.0.0"
 pipeline_mode: "rayextract_full"
 input:
-  path: "/scratch/matheuspimenta/canoa/cloud_sample_mincorner_fullquality.laz"
+  path: "/home/matheuspimenta/Jobs/Eucalipto/canoa/recorte_50_center.laz"
   format: "auto"
 output:
-  output_dir: "results/canoa/rayextract_full"
+  output_dir: "results/canoa/tests/3/rayextract_full"
   cloud_format: "ply"
 runtime:
   docker_compose_profile: "rct"
@@ -15,7 +15,19 @@ failure_policy:
   on_segmentation_error: "mark_partial"
   on_metrics_error: "mark_partial"
 providers:
-  rayextract: {}
+  rayextract:
+    # Algorithm hyper-parameters (all optional, defaults from raycloudtools if not specified)
+    max_diameter: 0.3              # Maximum tree diameter in meters (range: 0.3-3.0, default: 0.9)
+    crop_length: 0.8               # Cylinder growth length from branch endpoints in meters (range: 0.1-2.0, default: 1.0)
+    height_min: 1.5                # Minimum height to count as tree in meters (range: 0.5-10.0, default: 2.0)
+    # girth_height_ratio: 0.12     # Amount up tree's height to estimate trunk girth (range: 0.05-0.3, default: 0.12)
+    gravity_factor: 2.0          # Preference for vertical orientation (range: 0.1-2.0, default: 0.3, higher=more vertical)
+    global_taper: 0.02          # Force a taper value in diameter/length (float, default: 0.024, set 0 to estimate from data)
+    global_taper_factor: 0.7     # Soft cutoff for global taper (range: 0.0-1.0, default: 0.3, 0=per-tree, 1=global)
+    distance_limit: 2.5          # Maximum distance between points in a tree (range: 0.5-5.0, default: 1.0)
+    # grid_width: 10               # Grid tile width in meters for large plots (range: 5-50, default: none)
+    # branch_segmentation: false   # Per-branch segmentation in output (boolean, default: false)
+    use_rays: true              # Use rays to reduce trunk radius overestimation (boolean, default: false)
   metrics:
     wood_density_kg_m3: 900.0
 external_paths:   

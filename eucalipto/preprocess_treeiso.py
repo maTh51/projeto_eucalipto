@@ -138,7 +138,7 @@ def filter_laz_by_preseg(input_laz: str,
 
     if pre_filter_dim not in extras:
         raise ValueError(
-            f"Campo de pré-segmentação '{pre_filter_dim}' não encontrado em {input_laz}"
+            f"Campo de pré-segmentação '{pre_filter_dim}' não encontrado em {input_laz}!\n\tCampos disponíveis: {list(extras.keys())}"
         )
 
     preseg = np.asarray(extras[pre_filter_dim])

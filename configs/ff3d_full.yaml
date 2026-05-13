@@ -1,10 +1,10 @@
 schema_version: "1.0.0"
 pipeline_mode: "ff3d_full"
 input:
-  path: "/home/matheuspimenta/Jobs/Eucalipto/drive/custom/CULS_CULS_plot_1_annotated_train.ply"
+  path: "/home/matheuspimenta/Jobs/Eucalipto/canoa/recorte_50_center.laz"
   format: "auto"
 output:
-  output_dir: "results/ff3d_full"
+  output_dir: "results/canoa/ff3d_full"
   cloud_format: "laz"
 runtime:
   docker_compose_profile: "ff3d"

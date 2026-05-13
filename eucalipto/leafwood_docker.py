@@ -144,7 +144,7 @@ def run_leafwood_for_treeiso_segments(
     )
 
     subprocess.run(
-        ["docker", "compose", "up", "-d"],
+        ["docker", "compose", "up", "-d", "--force-recreate"],
         cwd=str(docker_dir),
         check=True,
     )
