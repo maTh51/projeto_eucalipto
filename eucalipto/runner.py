@@ -193,6 +193,14 @@ def _run_treeiso_leafwood_mode(cfg: PipelineConfig, dep_paths: Dict[str, Path]) 
         seg_ids = np.asarray(extras[tree_field]).astype(np.int32)
         inst, inst_meta_local = adapter_treeiso_to_instances(points, seg_ids)
 
+        print(f"Processing TreeISO output with {len(np.unique(inst.tree_id))} segments...")
+        
+        # Prepare optional parameters for leafwood inference
+        model_ckpt = lw_cfg.get("model_ckpt", "/project/model_weights/weights_randlanet.pth")
+        grid_size = float(lw_cfg.get("grid_size", 0.02))
+        model_name = lw_cfg.get("model_name", "RandLANet")
+        print(f"  ↳ Model: {model_name} | Grid: {grid_size}m")
+        
         labels_by_segment = leafwood_docker.run_leafwood_for_treeiso_segments(
             points=points,
             seg_ids=inst.tree_id,
@@ -200,16 +208,31 @@ def _run_treeiso_leafwood_mode(cfg: PipelineConfig, dep_paths: Dict[str, Path]) 
             leafwood_repo_dir=str(dep_paths["leafwood"]),
             docker_subdir=lw_cfg.get("docker_subdir", "docker"),
             docker_service=lw_cfg.get("docker_service", "open3dml"),
-            model_ckpt=lw_cfg.get("model_ckpt", "/project/model_weights/weights_randlanet.pth"),
+            model_ckpt=model_ckpt,
             device=lw_cfg.get("device", "cuda"),
             batch_size=int(lw_cfg.get("batch_size", 1)),
             job_name=lw_cfg.get("job_name", "canonical_treeiso_leafwood"),
+            grid_size=grid_size,
+            model_name=model_name,
         )
 
-        trunk_leaf = np.zeros(points.shape[0], dtype=np.int32)
-        for sid in np.unique(inst.tree_id):
-            mask = inst.tree_id == sid
-            trunk_leaf[mask] = labels_by_segment[int(sid)]
+        if not labels_by_segment:
+            print(f"⚠️  WARNING: No leaf-wood predictions generated for {out_path.name}!")
+            print(f"   Defaulting all points to leaf class (0)")
+            trunk_leaf = np.zeros(points.shape[0], dtype=np.int32)
+        else:
+            trunk_leaf = np.zeros(points.shape[0], dtype=np.int32)
+            for sid in np.unique(inst.tree_id):
+                mask = inst.tree_id == sid
+                if int(sid) not in labels_by_segment:
+                    print(f"  ⚠ Segment {sid} missing from predictions, using default (leaf)")
+                    trunk_leaf[mask] = 0
+                else:
+                    try:
+                        trunk_leaf[mask] = labels_by_segment[int(sid)]
+                    except Exception as e:
+                        print(f"  ✗ Error assigning labels for segment {sid}: {e}")
+                        trunk_leaf[mask] = 0
 
         seg, seg_meta_local = adapter_leafwood_to_segmentation(points, inst.tree_id, trunk_leaf)
 

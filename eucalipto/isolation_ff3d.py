@@ -36,35 +36,80 @@ def run_ff3d_docker(
     if not input_path.exists():
         raise FileNotFoundError(f"Input file not found: {input_laz}")
 
-    dest_path = Path(bucket_in_dir) / input_path.name
-    shutil.copy2(str(input_path), str(dest_path))
-    print(f"Copied {input_laz} to {dest_path}")
-
-    if not dest_path.exists():
-        raise FileNotFoundError(f"Failed to copy file to {dest_path}")
-    time.sleep(1)
-
-    container_name = os.environ.get("FF3D_CONTAINER_NAME", "forestformer-forestsens-container")
-    subprocess.run(
-        [
-            "docker",
-            "exec",
-            container_name,
-            "bash",
-            "-lc",
-            f"rm -f /workspace/data/ForAINetV2/test_data/{input_path.name} && mkdir -p /workspace/data/ForAINetV2/test_data",
-        ],
-        check=True,
-    )
-    subprocess.run(
-        [
-            "docker",
-            "cp",
-            str(dest_path),
-            f"{container_name}:/workspace/data/ForAINetV2/test_data/{input_path.name}",
-        ],
-        check=True,
-    )
+    # Use a temporary directory outside of any Docker volumes for reliable file transfer
+    with tempfile.TemporaryDirectory(prefix="ff3d_", dir="/tmp") as tmpdir:
+        tmpdir_path = Path(tmpdir)
+        temp_copy = tmpdir_path / input_path.name
+        
+        # Stage the file in /tmp first
+        shutil.copy2(str(input_path), str(temp_copy))
+        print(f"Staged file to temp location: {temp_copy}")
+        
+        if not temp_copy.exists():
+            raise FileNotFoundError(f"Failed to stage file to {temp_copy}")
+        
+        os.chmod(str(temp_copy), 0o644)
+        os.sync()
+        time.sleep(0.5)
+        
+        if not temp_copy.exists():
+            raise FileNotFoundError(f"Staged file disappeared: {temp_copy}")
+        if not os.access(str(temp_copy), os.R_OK):
+            raise PermissionError(f"Cannot read staged file: {temp_copy}")
+        
+        file_size = temp_copy.stat().st_size
+        print(f"Staged file verified: {temp_copy.name} ({file_size} bytes)")
+        
+        container_name = os.environ.get("FF3D_CONTAINER_NAME", "forestformer-forestsens-container")
+        
+        # Prepare container
+        print(f"Preparing container {container_name}...")
+        subprocess.run(
+            [
+                "docker",
+                "exec",
+                container_name,
+                "bash",
+                "-lc",
+                f"rm -f /workspace/data/ForAINetV2/test_data/{input_path.name} && mkdir -p /workspace/data/ForAINetV2/test_data",
+            ],
+            check=True,
+        )
+        
+        # Extra sync and wait to ensure container is ready
+        os.sync()
+        time.sleep(1)
+        
+        # Copy from temp location (not from bucket_in_dir) to avoid volume mount issues
+        print(f"Copying file from temp location to container...")
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                subprocess.run(
+                    [
+                        "docker",
+                        "cp",
+                        str(temp_copy),
+                        f"{container_name}:/workspace/data/ForAINetV2/test_data/{input_path.name}",
+                    ],
+                    check=True,
+                )
+                print(f"Successfully copied to container (attempt {attempt + 1})")
+                break
+            except subprocess.CalledProcessError as e:
+                if attempt < max_retries - 1:
+                    print(f"docker cp failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    print(f"Temp file exists: {temp_copy.exists()}")
+                    if temp_copy.exists():
+                        print(f"Temp file size: {temp_copy.stat().st_size} bytes, readable: {os.access(str(temp_copy), os.R_OK)}")
+                    time.sleep(2)
+                else:
+                    raise
+        
+        # Also copy to bucket_in_dir for reference/debugging
+        dest_path = Path(bucket_in_dir) / input_path.name
+        shutil.copy2(str(temp_copy), str(dest_path))
+        print(f"Copied file to bucket_in_folder for reference: {dest_path}")
 
     files_in_bucket = list(Path(bucket_in_dir).glob("*"))
     print(f"Files in bucket_in_dir ({bucket_in_dir}): {files_in_bucket}")
@@ -112,11 +157,21 @@ def _extract_ff3d_outputs_from_container(container_name: str, bucket_out_dir: st
             if not zip_name:
                 raise FileNotFoundError("No results_*.zip file found in container output directory")
 
-            subprocess.run(
-                ["docker", "cp", f"{container_name}:{zip_name}", str(tmpdir_path / "results.zip")],
-                check=True,
-                capture_output=True,
-            )
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    subprocess.run(
+                        ["docker", "cp", f"{container_name}:{zip_name}", str(tmpdir_path / "results.zip")],
+                        check=True,
+                        capture_output=True,
+                    )
+                    break
+                except subprocess.CalledProcessError as e:
+                    if attempt < max_retries - 1:
+                        print(f"docker cp from container failed (attempt {attempt + 1}/{max_retries}), retrying...")
+                        time.sleep(2)
+                    else:
+                        raise
         except Exception as exc:
             print(f"Warning: Could not extract results ZIP from container: {exc}")
             result = subprocess.run(
@@ -133,6 +188,7 @@ def _extract_ff3d_outputs_from_container(container_name: str, bucket_out_dir: st
             print(f"Warning: ZIP not found at {zip_path}")
             return
 
+        # Stage extraction in /tmp to avoid Docker volume issues
         extracted_root = tmpdir_path / "extracted"
         extracted_root.mkdir(parents=True, exist_ok=True)
 
@@ -140,28 +196,65 @@ def _extract_ff3d_outputs_from_container(container_name: str, bucket_out_dir: st
         with zipfile.ZipFile(str(zip_path), "r") as zf:
             zf.extractall(str(extracted_root))
 
+        # Use staging directory for output writes to avoid Docker volume issues
+        stage_root = tmpdir_path / "stage"
+        stage_root.mkdir(parents=True, exist_ok=True)
+
+        # Copy extracted files to staging directory first
+        print(f"Staging extracted files...")
         for extracted_file in extracted_root.rglob("*"):
             if not extracted_file.is_file():
                 continue
             relative_path = extracted_file.relative_to(extracted_root)
-            target_path = Path(bucket_out_dir) / relative_path
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(str(extracted_file), str(target_path))
+            stage_path = stage_root / relative_path
+            stage_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(str(extracted_file), str(stage_path))
 
-        ply_files = list(extracted_root.rglob("*.ply"))
-        print(f"Found {len(ply_files)} PLY file(s)")
-
+        # Convert PLY files to LAZ in staging directory
+        ply_files = list(stage_root.rglob("*.ply"))
+        print(f"Found {len(ply_files)} PLY file(s), converting to LAZ...")
         for ply_file in ply_files:
             print(f"Converting {ply_file.name} to LAZ...")
-            laz_file = Path(bucket_out_dir) / ply_file.name.replace(".ply", ".laz")
+            laz_file = stage_root / ply_file.name.replace(".ply", ".laz")
             try:
                 ply_las = laspy.read(str(ply_file))
                 ply_las.write(str(laz_file))
-                print(f"✓ Converted to {laz_file}")
+                print(f"✓ Converted to {laz_file.name}")
             except Exception as exc:
                 print(f"✗ Failed to convert {ply_file.name}: {exc}")
-                shutil.copy2(str(ply_file), str(Path(bucket_out_dir) / ply_file.name))
-                print(f"✓ Copied PLY as fallback to {Path(bucket_out_dir) / ply_file.name}")
+                print(f"✓ Will copy PLY as fallback")
+
+        # Ensure output directory exists
+        Path(bucket_out_dir).mkdir(parents=True, exist_ok=True)
+        
+        # Force sync before copying to bucket_out_dir
+        os.sync()
+        time.sleep(0.5)
+        
+        # Finally, copy all staged files to the actual output directory
+        print(f"Copying staged results to output directory...")
+        for staged_file in stage_root.rglob("*"):
+            if not staged_file.is_file():
+                continue
+            relative_path = staged_file.relative_to(stage_root)
+            target_path = Path(bucket_out_dir) / relative_path
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            max_copy_retries = 3
+            for copy_attempt in range(max_copy_retries):
+                try:
+                    shutil.copy2(str(staged_file), str(target_path))
+                    print(f"  ✓ {relative_path.name}")
+                    break
+                except Exception as e:
+                    if copy_attempt < max_copy_retries - 1:
+                        print(f"  ⚠ Retry copying {relative_path.name} ({copy_attempt + 1}/{max_copy_retries})")
+                        time.sleep(1)
+                    else:
+                        print(f"  ✗ Failed to copy {relative_path.name}: {e}")
+                        raise
+        
+        print(f"Successfully extracted and staged all outputs to {bucket_out_dir}")
 
 
 def _load_labelled_laz(

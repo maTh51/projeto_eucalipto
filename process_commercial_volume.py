@@ -328,7 +328,37 @@ def fix_rayextract_mesh_csv(
     output_suffix: str = "_fixed",
 ) -> Path:
     """Fix RayExtract mesh CSV using tree-relative CBC and tree structure height."""
-    df = pd.read_csv(csv_path)
+    csv_path = Path(csv_path)
+    
+    # Skip if file is PLY (point cloud mesh, not CSV data)
+    if csv_path.suffix.lower() == '.ply':
+        print(f"⚠️  Skipping {csv_path.name}: PLY mesh files cannot be processed as CSV.")
+        print(f"    (RayExtract mesh PLY files are point cloud data, not structured data)")
+        return csv_path
+    
+    # Try reading CSV with different encodings
+    encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252', 'utf-16']
+    df = None
+    last_error = None
+    
+    for encoding in encodings:
+        try:
+            df = pd.read_csv(csv_path, encoding=encoding)
+            print(f"✓ Successfully read CSV with encoding: {encoding}")
+            break
+        except (UnicodeDecodeError, LookupError) as e:
+            last_error = e
+            continue
+    
+    if df is None:
+        raise UnicodeDecodeError(
+            'utf-8', 
+            b'', 
+            0, 
+            1,
+            f"Could not read {csv_path.name} with any of the supported encodings {encodings}. "
+            f"Last error: {last_error}"
+        )
     tree_df = read_rayextract_tree_file(str(treefile_path))
     root_nodes = tree_df[tree_df["parent_id"] == -1].index.tolist()
 

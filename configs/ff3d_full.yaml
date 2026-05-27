@@ -1,7 +1,7 @@
 schema_version: "1.0.0"
 pipeline_mode: "ff3d_full"
 input:
-  path: "/home/matheuspimenta/Jobs/Eucalipto/canoa/recorte_50_center.laz"
+  path: "/home/matheuspimenta/Jobs/Eucalipto/canoa/diego_talhao_62.las"
   format: "auto"
 output:
   output_dir: "results/canoa/ff3d_full"

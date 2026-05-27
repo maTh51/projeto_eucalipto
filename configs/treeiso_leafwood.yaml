@@ -1,7 +1,7 @@
 schema_version: "1.0.0"
 pipeline_mode: "treeiso_leafwood"
 input:
-  path: "/home/matheuspimenta/Jobs/Eucalipto/drive/custom/CULS_CULS_plot_2_annotated_test.ply"
+  path: "/home/matheuspimenta/Jobs/Eucalipto/canoa/diego_talhao_62.las"
   format: "auto"
 output:
   output_dir: "results/canoa/treeiso_leafwood"
@@ -19,16 +19,36 @@ providers:
     tree_id_dim: "final_segs"
     force_python_cut_pursuit: true
     pre_filter_enabled: true
-    pre_filter_dim: "treeID"
-    pre_filter_ground_value: 0
+    pre_filter_dim: "classification"
+    pre_filter_ground_value: 2
   leafwood:
+    # Model checkpoint - options:
+    # - "/project/model_weights/weights_randlanet.pth" (default, balanced)
+    # - "/project/model_weights/weights_kpconv.pth" (better for sparse/occluded data)
+    # - "/project/model_weights/weights_pointtransformer.pth" (newest, slower)
+    model_ckpt: "/project/model_weights/weights_randlanet.pth"
+    
+    # Model name - must match the checkpoint architecture
+    # Options: "RandLANet", "KPConv", "PointTransformer"
+    model_name: "RandLANet"
+    
+    # Voxel grid size for downsampling (in meters)
+    # Smaller = more detail (slower), Larger = faster but coarser
+    # Recommended values:
+    # - 0.01: very dense clouds with fine details
+    # - 0.02: standard/normal clouds (default)
+    # - 0.03-0.04: sparse/occluded clouds with poor quality data
+    # - 0.05: very sparse clouds
+    grid_size: 0.03
+    
     docker_subdir: "docker"
     docker_service: "open3dml"
-    model_ckpt: "/project/model_weights/weights_randlanet.pth"
     device: "cuda"
     batch_size: 1
+  
   metrics:
     wood_density_kg_m3: 900.0
+
 external_paths:
   ff3d_inference: "/home/matheuspimenta/Jobs/Eucalipto/FF3D_inference/ff3d_forestsens"
   forestformer3d: "/home/matheuspimenta/Jobs/Eucalipto/ForestFormer3D"

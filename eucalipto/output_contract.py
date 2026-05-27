@@ -29,6 +29,8 @@ def write_canonical_cloud(
     cloud_format: str,
 ) -> Path:
     """Write standardized cloud with required canonical fields."""
+    import os
+    import time
     from . import io as eio  # lazy import: only needed when writing clouds
 
     extras = {
@@ -40,15 +42,58 @@ def write_canonical_cloud(
 
     if cloud_format == "laz":
         out_path = output_dir / "classified_cloud.laz"
-        eio.save_laz(str(out_path), points_xyz, extras=extras)
-        return out_path
+        out_path_str = str(out_path)
+        
+        # Write with retries and verification
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                eio.save_laz(out_path_str, points_xyz, extras=extras)
+                
+                # Verify file was written
+                if not out_path.exists():
+                    raise FileNotFoundError(f"File not written: {out_path}")
+                
+                file_size = out_path.stat().st_size
+                print(f"✓ Wrote LAZ cloud: {out_path.name} ({file_size} bytes)")
+                return out_path
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"  ⚠ Retry writing LAZ ({attempt + 1}/{max_retries}): {e}")
+                    os.sync()
+                    time.sleep(1)
+                else:
+                    raise
 
     out_path = output_dir / "classified_cloud.ply"
-    eio.save_ply_with_fields(str(out_path), points_xyz, extras)
-    return out_path
+    out_path_str = str(out_path)
+    
+    # Write with retries and verification
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            eio.save_ply_with_fields(out_path_str, points_xyz, extras)
+            
+            # Verify file was written
+            if not out_path.exists():
+                raise FileNotFoundError(f"File not written: {out_path}")
+            
+            file_size = out_path.stat().st_size
+            print(f"✓ Wrote PLY cloud: {out_path.name} ({file_size} bytes)")
+            return out_path
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"  ⚠ Retry writing PLY ({attempt + 1}/{max_retries}): {e}")
+                os.sync()
+                time.sleep(1)
+            else:
+                raise
 
 
 def write_metrics_csv(output_dir: Path, rows: Iterable[TreeMetricRow]) -> Path:
+    import os
+    import time
+    
     out_path = output_dir / "metrics.csv"
     fieldnames = [
         "tree_id",
@@ -59,30 +104,71 @@ def write_metrics_csv(output_dir: Path, rows: Iterable[TreeMetricRow]) -> Path:
         "metric_provider",
         "warnings",
     ]
-    with out_path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(
-                {
-                    "tree_id": row.tree_id,
-                    "dbh_cm": row.dbh_cm,
-                    "height_m": row.height_m,
-                    "volume_m3": row.volume_m3,
-                    "mass_kg": row.mass_kg,
-                    "metric_provider": row.metric_provider,
-                    "warnings": ";".join(row.warnings),
-                }
-            )
-    return out_path
+    
+    # Convert iterable to list for potential retries
+    rows_list = list(rows)
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            with out_path.open("w", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames)
+                writer.writeheader()
+                for row in rows_list:
+                    writer.writerow(
+                        {
+                            "tree_id": row.tree_id,
+                            "dbh_cm": row.dbh_cm,
+                            "height_m": row.height_m,
+                            "volume_m3": row.volume_m3,
+                            "mass_kg": row.mass_kg,
+                            "metric_provider": row.metric_provider,
+                            "warnings": ";".join(row.warnings),
+                        }
+                    )
+            
+            # Verify file was written
+            if not out_path.exists():
+                raise FileNotFoundError(f"Metrics CSV not written: {out_path}")
+            file_size = out_path.stat().st_size
+            print(f"✓ Wrote metrics CSV: {out_path.name} ({file_size} bytes)")
+            return out_path
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"  ⚠ Retry writing metrics CSV ({attempt + 1}/{max_retries}): {e}")
+                os.sync()
+                time.sleep(1)
+            else:
+                raise
 
 
 def write_run_manifest(output_dir: Path, manifest: Dict[str, Any]) -> Path:
+    import os
+    import time
+    
     out_path = output_dir / "run_manifest.json"
     full_manifest = {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         **manifest,
     }
-    out_path.write_text(json.dumps(full_manifest, indent=2), encoding="utf-8")
-    return out_path
+    manifest_text = json.dumps(full_manifest, indent=2)
+    
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            out_path.write_text(manifest_text, encoding="utf-8")
+            
+            # Verify file was written
+            if not out_path.exists():
+                raise FileNotFoundError(f"Manifest JSON not written: {out_path}")
+            file_size = out_path.stat().st_size
+            print(f"✓ Wrote run manifest: {out_path.name} ({file_size} bytes)")
+            return out_path
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"  ⚠ Retry writing manifest JSON ({attempt + 1}/{max_retries}): {e}")
+                os.sync()
+                time.sleep(1)
+            else:
+                raise
 
