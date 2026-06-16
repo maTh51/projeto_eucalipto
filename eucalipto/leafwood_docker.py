@@ -241,14 +241,17 @@ def run_leafwood_for_treeiso_segments(
         model_name=model_name,
     )
 
+    project_root = Path(__file__).resolve().parents[1]
     subprocess.run(
-        ["docker", "compose", "up", "-d", "--force-recreate"],
-        cwd=str(docker_dir),
+        ["docker", "compose", "--profile", "workers", "up", "-d", "--force-recreate", docker_service],
+        cwd=str(project_root),
         check=True,
     )
     infer_cmd = [
         "docker",
         "compose",
+        "--profile",
+        "workers",
         "exec",
         "-T",
         docker_service,
@@ -259,6 +262,8 @@ def run_leafwood_for_treeiso_segments(
     cpu_infer_cmd = [
         "docker",
         "compose",
+        "--profile",
+        "workers",
         "exec",
         "-T",
         "-e",
@@ -270,7 +275,7 @@ def run_leafwood_for_treeiso_segments(
     ]
 
     try:
-        subprocess.run(infer_cmd, cwd=str(docker_dir), check=True)
+        subprocess.run(infer_cmd, cwd=str(project_root), check=True)
     except subprocess.CalledProcessError:
         if device.lower() == "cpu":
             raise
@@ -285,7 +290,7 @@ def run_leafwood_for_treeiso_segments(
             grid_size=grid_size,
             model_name=model_name,
         )
-        subprocess.run(cpu_infer_cmd, cwd=str(docker_dir), check=True)
+        subprocess.run(cpu_infer_cmd, cwd=str(project_root), check=True)
 
     labels_by_segment: Dict[int, np.ndarray] = {}
     missing_segments = []

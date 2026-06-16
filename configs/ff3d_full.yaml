@@ -1,7 +1,7 @@
 schema_version: "1.0.0"
 pipeline_mode: "ff3d_full"
 input:
-  path: "/home/matheuspimenta/Jobs/Eucalipto/canoa/diego_talhao_62.las"
+  path: "/home/matheuspimenta/euc/projeto_eucalipto/talhao_62_25x25.las"
   format: "auto"
 output:
   output_dir: "results/canoa/ff3d_full"
@@ -23,10 +23,11 @@ providers:
     bucket_out_dir: "/path/to/FF3D_oracle/bucket_out_folder"
   metrics:
     wood_density_kg_m3: 900.0
-external_paths:
-  ff3d_inference: "/home/matheuspimenta/Jobs/Eucalipto/FF3D_inference/ff3d_forestsens"
-  forestformer3d: "/home/matheuspimenta/Jobs/Eucalipto/ForestFormer3D"
-  treeiso: "/home/matheuspimenta/Jobs/Eucalipto/artemis_treeiso"
-  leafwood: "/home/matheuspimenta/Jobs/Eucalipto/leaf-wood-segmentation-with-deep-learning"
-  rayextract_manual: "/home/matheuspimenta/Jobs/Eucalipto/rayextract-manual"
+# external_paths:
+#   ff3d_inference: "/home/matheuspimenta/euc/FF3D_inference/ff3d_forestsens"
+#   forestformer3d: "/home/matheuspimenta/euc/ForestFormer3D"
+#   treeiso: "/home/matheuspimenta/euc/artemis_treeiso"
+#   leafwood: "/home/matheuspimenta/euc/leaf-wood-segmentation-with-deep-learning"
+#   rayextract_manual: "/home/matheuspimenta/euc/rayextract-manual"
+
 

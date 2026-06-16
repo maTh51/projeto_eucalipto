@@ -64,6 +64,56 @@ def run_ff3d_docker(
         
         # Prepare container
         print(f"Preparing container {container_name}...")
+        
+        # Ensure the image exists or rebuild if requested
+        check_image = subprocess.run(
+            ["docker", "images", "-q", "forestformer-forestsens-image"],
+            capture_output=True, text=True, check=True
+        )
+        image_exists = bool(check_image.stdout.strip())
+        
+        project_root = Path(__file__).resolve().parents[1]
+        if not image_exists or rebuild_image == "always":
+            print("Image forestformer-forestsens-image not found or rebuild requested. Building via docker compose...")
+            subprocess.run(
+                ["docker", "compose", "--profile", "workers", "build", "forestformer-forestsens"],
+                cwd=str(project_root),
+                check=True
+            )
+
+        # Ensure the container is created and running
+        check_exist = subprocess.run(
+            ["docker", "ps", "-a", "--format", "{{.Names}}"],
+            capture_output=True, text=True, check=True
+        )
+        exists = container_name in check_exist.stdout.splitlines()
+        
+        if not exists:
+            print(f"Container {container_name} does not exist. Creating it...")
+            os.makedirs(bucket_in_dir, exist_ok=True)
+            os.makedirs(bucket_out_dir, exist_ok=True)
+            subprocess.run([
+                "docker", "run", "-d",
+                "--gpus", "all",
+                "--shm-size", "128g",
+                "-p", "127.0.0.1:49218:22",
+                "--name", container_name,
+                "-v", f"{ff3d_repo_dir}:/workspace",
+                "--mount", f"type=bind,source={bucket_in_dir},target=/workspace/data/ForAINetV2/test_data",
+                "--mount", f"type=bind,source={bucket_out_dir},target=/workspace/work_dirs/output",
+                "--entrypoint", "bash",
+                "forestformer-forestsens-image", "-lc", "sleep infinity"
+            ], check=True)
+        else:
+            check_running = subprocess.run(
+                ["docker", "ps", "--format", "{{.Names}}"],
+                capture_output=True, text=True, check=True
+            )
+            running = container_name in check_running.stdout.splitlines()
+            if not running:
+                print(f"Container {container_name} is stopped. Starting it...")
+                subprocess.run(["docker", "start", container_name], check=True)
+
         subprocess.run(
             [
                 "docker",
@@ -118,11 +168,21 @@ def run_ff3d_docker(
     env["HOST_PROJECT_DIR"] = ff3d_repo_dir
     env["HOST_BUCKET_IN"] = bucket_in_dir
     env["HOST_BUCKET_OUT"] = bucket_out_dir
-    env["REBUILD_IMAGE"] = rebuild_image
+    env["REBUILD_IMAGE"] = "never"
     env["RECREATE_CONTAINER"] = recreate_container
+    env["SKIP_PROVISION"] = "true"
+    env["SKIP_PREPROCESS"] = "true"
 
     script_path = os.path.join(ff3d_repo_dir, "run_docker_locally.sh")
     subprocess.run(["bash", script_path], cwd=ff3d_repo_dir, env=env, check=True)
+
+    # Restore ownership of output files to the host user
+    uid = os.getuid()
+    gid = os.getgid()
+    subprocess.run(
+        ["docker", "exec", container_name, "chown", "-R", f"{uid}:{gid}", "/workspace/work_dirs/output"],
+        check=True
+    )
 
     _extract_ff3d_outputs_from_container(
         container_name=container_name,

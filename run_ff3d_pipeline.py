@@ -26,11 +26,11 @@ from eucalipto import pipeline_core
 # ==========================
 
 # Path to FF3D_inference/ff3d_forestsens directory
-FF3D_REPO_DIR = "/home/matheuspimenta/Jobs/Eucalipto/FF3D_inference/ff3d_forestsens"
+FF3D_REPO_DIR = "/home/matheuspimenta/FF3D_inference/ff3d_forestsens"
 
 # Bucket in/out directories used by FF3D_inference
-BUCKET_IN_DIR = "/home/matheuspimenta/Jobs/Eucalipto/FF3D_inference/FF3D_oracle/bucket_in_folder"
-BUCKET_OUT_DIR = "/home/matheuspimenta/Jobs/Eucalipto/FF3D_inference/FF3D_oracle/bucket_out_folder"
+BUCKET_IN_DIR = "/home/matheuspimenta/FF3D_inference/FF3D_oracle/bucket_in_folder"
+BUCKET_OUT_DIR = "/home/matheuspimenta/FF3D_inference/FF3D_oracle/bucket_out_folder"
 
 # Input LAS/LAZ file for a plot
 INPUT_LAZ = "/path/to/your/input.laz"  # TODO: set this

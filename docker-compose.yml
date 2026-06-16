@@ -42,3 +42,50 @@ services:
       - ./data:/workspace/data
       - ./results:/workspace/results
     profiles: ["rayextract_full"]
+
+  # FF3D inference container (ForestFormer3D)
+  forestformer-forestsens:
+    build:
+      context: ./third_party/FF3D_inference/ff3d_forestsens
+      dockerfile: ../../../docker/Dockerfile.forestformer
+    image: forestformer-forestsens-image
+    container_name: forestformer-forestsens-container
+    working_dir: /workspace
+    volumes:
+      - ./third_party/FF3D_inference/ff3d_forestsens:/workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    ipc: host
+    profiles: ["workers"]
+
+  # Leaf-wood segmentation container (RandLANet/KPConv/PointTransformer)
+  open3dml:
+    build:
+      context: ./third_party/leaf-wood-segmentation-with-deep-learning/docker
+      dockerfile: ../../../../docker/Dockerfile.open3dml
+    image: open3dml
+    container_name: open3dml
+    working_dir: /project
+    volumes:
+      - ./third_party/leaf-wood-segmentation-with-deep-learning/cfg:/project/cfg
+      - ./third_party/leaf-wood-segmentation-with-deep-learning/logs:/project/logs
+      - ./third_party/leaf-wood-segmentation-with-deep-learning/scripts:/project/scripts
+      - ./third_party/leaf-wood-segmentation-with-deep-learning/train_log:/project/train_log
+      - ./third_party/leaf-wood-segmentation-with-deep-learning/data:/project/data
+    stdin_open: true 
+    tty: true
+    ipc: host 
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    profiles: ["workers"]
+

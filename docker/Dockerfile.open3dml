@@ -1,0 +1,27 @@
+FROM python:3.8-slim-bullseye
+
+# install environment dependencies
+RUN apt-get update -yqq \
+    && apt-get install -yqq --no-install-recommends \
+      git \
+      libgl1 \
+      libglib2.0-0 \
+      libx11-6 \
+      build-essential \
+      gcc \
+      freetds-dev \
+      freetds-bin \
+    && apt-get -q clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# set the working directory
+WORKDIR /project
+
+# copy files to the image
+COPY ./requirements.txt .
+
+# install requirements
+RUN python -m pip install --default-timeout=1000 --upgrade pip wheel setuptools \
+    && pip install --default-timeout=1000 ez_setup \
+    && pip install --default-timeout=1000 -r requirements.txt --no-cache-dir \
+    && rm -r /root/.cache
