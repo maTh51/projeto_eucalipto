@@ -376,6 +376,11 @@ def _run_rayextract_full(cfg: PipelineConfig) -> tuple[np.ndarray, np.ndarray, n
     
     _run_cmd_try_local_then_docker(trees_cmd)
 
+    # Run treeinfo on the generated *_trees.txt file
+    treefile_path = work_dir / f"{pcd_path.stem}_raycloud_trees.txt"
+    treeinfo_path = work_dir / f"{pcd_path.stem}_raycloud_trees_info.txt"
+    _run_cmd_try_local_then_docker(["treeinfo", str(treefile_path)])
+
     segmented = work_dir / f"{pcd_path.stem}_raycloud_segmented.ply"
     points, extras = io.load_ply(str(segmented))
     # For RCT segmented clouds, there is no strict canonical field by default.
@@ -385,7 +390,53 @@ def _run_rayextract_full(cfg: PipelineConfig) -> tuple[np.ndarray, np.ndarray, n
         tree_id = np.full(points.shape[0], -1, dtype=np.int32)
     # RCT leaf/wood split is separate; fill sentinel unless configured.
     trunk_leaf = np.full(points.shape[0], -1, dtype=np.int32)
-    return points, tree_id, trunk_leaf, {"rct_native": "tree_id/trunk_leaf_label"}
+    return points, tree_id, trunk_leaf, {"rct_native": "tree_id/trunk_leaf_label"}, treeinfo_path
+
+
+def _parse_treeinfo_metrics(treeinfo_path: Path, wood_density: float | None = None) -> List[TreeMetricRow]:
+    rows: List[TreeMetricRow] = []
+    if not treeinfo_path.exists():
+        raise FileNotFoundError(f"treeinfo output file not found at {treeinfo_path}")
+    
+    tree_idx = 0
+    with open(treeinfo_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("height"):
+                continue
+            parts = [p.strip() for p in line.split(",") if p.strip()]
+            if len(parts) < 7:
+                continue
+            try:
+                height_m = float(parts[0])
+                dbh_m = float(parts[4])
+                dbh_cm = dbh_m * 100.0
+                
+                # Parse segments
+                segment_vols = []
+                for s in range(0, len(parts) - 7, 14):
+                    if 7 + s + 6 < len(parts):
+                        vol_val = float(parts[7 + s + 6])
+                        segment_vols.append(vol_val)
+                
+                total_volume = sum(segment_vols) if segment_vols else 0.0
+                mass_kg = total_volume * wood_density if (wood_density is not None and total_volume > 0) else None
+                
+                rows.append(
+                    TreeMetricRow(
+                        tree_id=tree_idx,
+                        dbh_cm=dbh_cm,
+                        height_m=height_m,
+                        volume_m3=total_volume,
+                        mass_kg=mass_kg,
+                        metric_provider="rct_qsm_metrics",
+                        warnings=[]
+                    )
+                )
+                tree_idx += 1
+            except (ValueError, IndexError):
+                continue
+    return rows
 
 
 def run_pipeline(cfg: PipelineConfig) -> Dict[str, str]:
@@ -409,24 +460,32 @@ def run_pipeline(cfg: PipelineConfig) -> Dict[str, str]:
     if cfg.pipeline_mode == "ff3d_full":
         points, tree_id, trunk_leaf, mapping = _run_ff3d_mode(cfg, resolved.paths)
         manifest["modules_executed"] = ["ff3d", "metrics"]
+        treeinfo_path = None
     elif cfg.pipeline_mode in {"treeiso_leafwood", "treeiso_leafwood_rctqsm"}:
         points, tree_id, trunk_leaf, mapping = _run_treeiso_leafwood_mode(cfg, resolved.paths)
         manifest["modules_executed"] = ["treeiso", "leafwood", "metrics"]
+        treeinfo_path = None
     elif cfg.pipeline_mode in {"rayextract_full", "rct_qsm_metrics"}:
-        points, tree_id, trunk_leaf, mapping = _run_rayextract_full(cfg)
+        points, tree_id, trunk_leaf, mapping, treeinfo_path = _run_rayextract_full(cfg)
         manifest["modules_executed"] = ["rayextract", "metrics"]
     else:
         raise ValueError(f"Unsupported pipeline mode: {cfg.pipeline_mode}")
 
     manifest["field_mapping"] = mapping
 
-    rows = _collect_metrics(
-        points_xyz=points,
-        tree_id=tree_id,
-        trunk_leaf_label=trunk_leaf,
-        metric_provider="canonical_metrics",
-        wood_density=cfg.providers.get("metrics", {}).get("wood_density_kg_m3"),
-    )
+    if cfg.pipeline_mode in {"rayextract_full", "rct_qsm_metrics"} and treeinfo_path is not None:
+        rows = _parse_treeinfo_metrics(
+            treeinfo_path=treeinfo_path,
+            wood_density=cfg.providers.get("metrics", {}).get("wood_density_kg_m3"),
+        )
+    else:
+        rows = _collect_metrics(
+            points_xyz=points,
+            tree_id=tree_id,
+            trunk_leaf_label=trunk_leaf,
+            metric_provider="canonical_metrics",
+            wood_density=cfg.providers.get("metrics", {}).get("wood_density_kg_m3"),
+        )
     cloud_path = write_canonical_cloud(
         output_dir=output_dir,
         points_xyz=points,
@@ -443,4 +502,5 @@ def run_pipeline(cfg: PipelineConfig) -> Dict[str, str]:
         "metrics_csv": str(metrics_path),
         "manifest": str(manifest_path),
     }
+
 

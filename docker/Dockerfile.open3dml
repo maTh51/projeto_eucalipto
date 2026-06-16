@@ -17,11 +17,17 @@ RUN apt-get update -yqq \
 # set the working directory
 WORKDIR /project
 
-# copy files to the image
-COPY ./requirements.txt .
-
-# install requirements
+# copy requirements and install
+COPY ./docker/requirements.txt .
 RUN python -m pip install --default-timeout=1000 --upgrade pip wheel setuptools \
     && pip install --default-timeout=1000 ez_setup \
     && pip install --default-timeout=1000 -r requirements.txt --no-cache-dir \
     && rm -r /root/.cache
+
+# Clone and install Open3D-ML
+RUN git clone https://github.com/woutervdbroeck/Open3D-ML /opt/Open3D-ML \
+    && pip install --no-cache-dir -e /opt/Open3D-ML
+
+# Copy the rest of the project and install leaf-wood-segmentation
+COPY . /project
+RUN pip install --no-cache-dir -e .

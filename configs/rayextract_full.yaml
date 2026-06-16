@@ -1,7 +1,7 @@
 schema_version: "1.0.0"
 pipeline_mode: "rayextract_full"
 input:
-  path: "/home/matheuspimenta/Jobs/Eucalipto/canoa/diego_talhao_62.las"
+  path: "/home/matheuspimenta/euc/projeto_eucalipto/talhao_62_25x25.las"
   format: "auto"
 output:
   output_dir: "results/canoa/tests/62/rayextract_full"

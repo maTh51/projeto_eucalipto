@@ -66,8 +66,8 @@ services:
   # Leaf-wood segmentation container (RandLANet/KPConv/PointTransformer)
   open3dml:
     build:
-      context: ./third_party/leaf-wood-segmentation-with-deep-learning/docker
-      dockerfile: ../../../../docker/Dockerfile.open3dml
+      context: ./third_party/leaf-wood-segmentation-with-deep-learning
+      dockerfile: ../../docker/Dockerfile.open3dml
     image: open3dml
     container_name: open3dml
     working_dir: /project
@@ -77,6 +77,7 @@ services:
       - ./third_party/leaf-wood-segmentation-with-deep-learning/scripts:/project/scripts
       - ./third_party/leaf-wood-segmentation-with-deep-learning/train_log:/project/train_log
       - ./third_party/leaf-wood-segmentation-with-deep-learning/data:/project/data
+      - ./third_party/leaf-wood-segmentation-with-deep-learning/model_weights:/project/model_weights
     stdin_open: true 
     tty: true
     ipc: host 
