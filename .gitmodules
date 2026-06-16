@@ -1,19 +1,24 @@
 [submodule "third_party/FF3D_inference"]
 	path = third_party/FF3D_inference
 	url = https://github.com/bxiang233/FF3D_inference.git
+	ignore = dirty
 
 [submodule "third_party/ForestFormer3D"]
 	path = third_party/ForestFormer3D
 	url = https://github.com/SmartForest-no/ForestFormer3D.git
+	ignore = dirty
 
 [submodule "third_party/artemis_treeiso"]
 	path = third_party/artemis_treeiso
 	url = https://github.com/truebelief/artemis_treeiso.git
+	ignore = dirty
 
 [submodule "third_party/leaf-wood-segmentation-with-deep-learning"]
 	path = third_party/leaf-wood-segmentation-with-deep-learning
 	url = https://github.com/qforestlab/leaf-wood-segmentation-with-deep-learning.git
+	ignore = dirty
 
 [submodule "third_party/rayextract-manual"]
 	path = third_party/rayextract-manual
 	url = https://github.com/qforestlab/rayextract-manual.git
+	ignore = dirty

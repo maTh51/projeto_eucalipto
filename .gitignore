@@ -208,3 +208,16 @@ __marimo__/
 
 data/
 results*/
+
+# Point Cloud files
+*.las
+*.laz
+*.ply
+*trees*.txt
+
+# Analysis & plot outputs
+*.csv
+*.svg
+*.npy
+*.pkl
+utils/*.png
