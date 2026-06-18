@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Eucalipto LiDAR 3D Biometrics Dashboard</title>
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    <!-- Boxicons Icons -->
+    <link href="https://unpkg.com/boxicons@2.1.4/css/boxicons.min.css" rel="stylesheet">
+    <!-- Main Style -->
+    <link rel="stylesheet" href="style.css">
+    <!-- Three.js and OrbitControls via CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body class="dark-theme">
+    <div class="app-container">
+        <!-- HEADER -->
+        <header class="app-header">
+            <div class="logo-area">
+                <i class="bx bx-leaf logo-icon"></i>
+                <span class="logo-text">EUCALIPTO <span class="logo-subtext">3D BIOMETRICS</span></span>
+            </div>
+            <div class="file-selector-bar">
+                <div class="select-wrapper">
+                    <i class="bx bx-file select-icon"></i>
+                    <select id="file-select">
+                        <option value="" disabled selected>Select point cloud file...</option>
+                    </select>
+                </div>
+                <button id="btn-load-file" class="btn btn-primary">
+                    <i class="bx bx-cloud-download"></i> Load
+                </button>
+                
+                <div class="divider"></div>
+                
+                <input type="file" id="file-upload-input" accept=".las,.laz,.ply" style="display: none;">
+                <button id="btn-upload-file" class="btn btn-primary">
+                    <i class="bx bx-upload"></i> Upload File
+                </button>
+            </div>
+            <div class="status-indicator" id="status-display">
+                <span class="status-dot status-offline"></span>
+                <span class="status-text">No cloud loaded</span>
+            </div>
+        </header>
+
+        <!-- MAIN CONTENT AREA -->
+        <main class="main-layout">
+            <!-- LEFT SIDEBAR: CONTROLS -->
+            <aside class="sidebar control-panel">
+                <div class="panel-section">
+                    <h2 class="section-title"><i class="bx bx-target-lock"></i> Tree Selection</h2>
+                    <div class="form-group">
+                        <label for="tree-select">Target Tree ID:</label>
+                        <div class="select-wrapper">
+                            <i class="bx bx-git-branch select-icon"></i>
+                            <select id="tree-select" disabled>
+                                <option value="" disabled selected>Load a cloud first...</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- DBH METHOD SETTINGS -->
+                <div class="panel-section">
+                    <h2 class="section-title"><i class="bx bx-circle"></i> DBH Calculation</h2>
+                    <div class="form-group">
+                        <label for="dbh-method">Estimation Method:</label>
+                        <div class="select-wrapper">
+                            <i class="bx bx-cog select-icon"></i>
+                            <select id="dbh-method" disabled>
+                                <option value="ensemble">Multi-Slice Ensemble (RANSAC)</option>
+                                <option value="single_ransac">Single RANSAC Circle</option>
+                                <option value="ls">Least Squares Circle Fit</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="method-parameters" id="dbh-params-container">
+                        <!-- Dynamic sliders inserted by JS -->
+                    </div>
+                </div>
+
+                <!-- VOLUME METHOD SETTINGS -->
+                <div class="panel-section">
+                    <h2 class="section-title"><i class="bx bx-cylinder"></i> Volume Calculation</h2>
+                    <div class="form-group">
+                        <label for="volume-method">Reconstruction Method:</label>
+                        <div class="select-wrapper">
+                            <i class="bx bx-cog select-icon"></i>
+                            <select id="volume-method" disabled>
+                                <option value="cylinder">Cylinder (DBH + Height)</option>
+                                <option value="axis_profile">Axis Profile Slices</option>
+                                <option value="voxel">Occupied Voxel Grid</option>
+                                <option value="frustum">Truncated Cone Frustum</option>
+                                <option value="taper">Polynomial Taper Integration</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="wood-density">Wood Density (kg/m³):</label>
+                        <div class="input-wrapper">
+                            <i class="bx bx-weight input-icon"></i>
+                            <input type="number" id="wood-density" value="900" step="50" min="100" max="2000" disabled>
+                        </div>
+                    </div>
+                    
+                    <div class="method-parameters" id="volume-params-container">
+                        <!-- Dynamic sliders inserted by JS -->
+                    </div>
+                </div>
+
+                <div class="panel-actions">
+                    <button id="btn-calculate" class="btn btn-accent btn-large" disabled>
+                        <i class="bx bx-play-circle animate-pulse"></i> Fit 3D Biometrics
+                    </button>
+                </div>
+            </aside>
+
+            <!-- CENTER WORKSPACE: 3D VIEWPORT -->
+            <section class="viewport-container">
+                <!-- 3D WebGL Canvas -->
+                <div id="canvas-container">
+                    <div class="viewer-placeholder" id="viewer-placeholder">
+                        <i class="bx bx-cube-alt placeholder-icon animate-float"></i>
+                        <h3>Interactive 3D Preview</h3>
+                        <p>Select a tree and click "Fit 3D Biometrics" to view the point cloud and fitted 3D meshes.</p>
+                    </div>
+                </div>
+
+                <!-- Floating Canvas Toolbar -->
+                <div class="canvas-toolbar" id="canvas-toolbar" style="display: none;">
+                    <button id="btn-reset-cam" class="tool-btn" title="Reset Camera"><i class="bx bx-refresh"></i></button>
+                    <div class="tool-divider"></div>
+                    <button id="toggle-points" class="tool-btn active" title="Toggle Point Cloud"><i class="bx bx-dots-vertical-rounded"></i></button>
+                    <button id="toggle-mesh" class="tool-btn active" title="Toggle Fitted Mesh"><i class="bx bx-shapes"></i></button>
+                    <div class="tool-divider"></div>
+                    <div class="tool-slider-group">
+                        <span class="tool-label">Point Size:</span>
+                        <input type="range" id="point-size-slider" min="1" max="10" value="3" step="1">
+                    </div>
+                    <div class="tool-slider-group">
+                        <span class="tool-label">Opacity:</span>
+                        <input type="range" id="mesh-opacity-slider" min="10" max="100" value="60" step="5">
+                    </div>
+                </div>
+
+                <!-- Loading Overlay -->
+                <div class="loading-overlay" id="loading-overlay" style="display: none;">
+                    <div class="loader-content">
+                        <div class="spinner"></div>
+                        <h4 id="loading-message">Processing points...</h4>
+                        <p>This may take a moment for larger segments.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- RIGHT SIDEBAR: METRICS, TABS & DIAGNOSTICS -->
+            <aside class="sidebar results-panel">
+                <!-- Tab Triggers -->
+                <div class="tab-header">
+                    <button class="tab-btn active" id="tab-btn-single" data-tab="single-inspect-tab">
+                        <i class="bx bx-cube"></i> Single Tree
+                    </button>
+                    <button class="tab-btn" id="tab-btn-macro" data-tab="macro-view-tab" disabled>
+                        <i class="bx bx-grid-alt"></i> Plot Macro
+                    </button>
+                </div>
+
+                <!-- TAB 1: SINGLE INSPECTOR -->
+                <div class="tab-content active" id="single-inspect-tab">
+                    <div class="panel-section">
+                        <h2 class="section-title"><i class="bx bx-line-chart"></i> Single Tree Results</h2>
+                        <div class="metrics-grid">
+                            <div class="metric-card">
+                                <span class="metric-label">DBH (Diameter)</span>
+                                <span class="metric-value" id="result-dbh">-</span>
+                                <span class="metric-unit">cm</span>
+                            </div>
+                            <div class="metric-card">
+                                <span class="metric-label">Tree Height</span>
+                                <span class="metric-value" id="result-height">-</span>
+                                <span class="metric-unit">meters</span>
+                            </div>
+                            <div class="metric-card accent-card">
+                                <span class="metric-label">Dry Volume</span>
+                                <span class="metric-value" id="result-volume">-</span>
+                                <span class="metric-unit">m³</span>
+                            </div>
+                            <div class="metric-card">
+                                <span class="metric-label">Estimated Mass</span>
+                                <span class="metric-value" id="result-mass">-</span>
+                                <span class="metric-unit">kg</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="panel-section flex-grow">
+                        <h2 class="section-title"><i class="bx bx-terminal"></i> Diagnostic Logs</h2>
+                        <div class="log-terminal">
+                            <div class="terminal-header">
+                                <span class="terminal-dot red-dot"></span>
+                                <span class="terminal-dot yellow-dot"></span>
+                                <span class="terminal-dot green-dot"></span>
+                                <span class="terminal-title">Diagnostics</span>
+                            </div>
+                            <div class="terminal-body" id="diagnostic-body">
+                                <span class="terminal-comment">// Select parameters and fit a tree to run diagnostics.</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 2: PLOT MACRO VIEW -->
+                <div class="tab-content" id="macro-view-tab">
+                    <div class="panel-section">
+                        <h2 class="section-title"><i class="bx bx-play-circle"></i> Batch Evaluation</h2>
+                        <button id="btn-run-batch" class="btn btn-accent btn-large">
+                            <i class="bx bx-run"></i> Run All Trees in Plot
+                        </button>
+                    </div>
+
+                    <!-- Macro Summaries -->
+                    <div class="panel-section" id="macro-summary-section" style="display: none;">
+                        <h2 class="section-title"><i class="bx bx-bar-chart-alt-2"></i> Plot Summary</h2>
+                        <div class="metrics-grid">
+                            <div class="metric-card accent-card">
+                                <span class="metric-label">Total Volume</span>
+                                <span class="metric-value" id="macro-total-volume">-</span>
+                                <span class="metric-unit">m³</span>
+                            </div>
+                            <div class="metric-card">
+                                <span class="metric-label">Mean DBH</span>
+                                <span class="metric-value" id="macro-mean-dbh">-</span>
+                                <span class="metric-unit">cm</span>
+                            </div>
+                            <div class="metric-card">
+                                <span class="metric-label">Mean Height</span>
+                                <span class="metric-value" id="macro-mean-height">-</span>
+                                <span class="metric-unit">meters</span>
+                            </div>
+                            <div class="metric-card">
+                                <span class="metric-label">Stem Count / Biomass</span>
+                                <span class="metric-value" id="macro-success-count">-</span>
+                                <span class="metric-unit">trees / tons</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Results List Table -->
+                    <div class="panel-section flex-grow" id="macro-table-section" style="display: none;">
+                        <h2 class="section-title"><i class="bx bx-list-ul"></i> Inventory Table</h2>
+                        <div class="search-filter-box">
+                            <i class="bx bx-search search-icon"></i>
+                            <input type="text" id="table-search" placeholder="Search Tree ID...">
+                        </div>
+                        <div class="table-scroll-container">
+                            <table class="inventory-table">
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>DBH (cm)</th>
+                                        <th>H (m)</th>
+                                        <th>Vol (m³)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="inventory-table-body">
+                                    <!-- Populated dynamically -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+        </main>
+    </div>
+
+    <!-- Main JavaScript -->
+    <script src="app.js"></script>
+</body>
+</html>

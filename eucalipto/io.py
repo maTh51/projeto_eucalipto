@@ -41,10 +41,12 @@ def save_laz(path: str,
 
     if like_path is not None:
         like_las = laspy.read(like_path)
-        header = like_las.header
+        header = like_las.header.copy()
+        header.point_count = len(points)
         point_format = header.point_format
     else:
         header = laspy.LasHeader(point_format=3, version="1.2")
+        header.point_count = len(points)
         point_format = header.point_format
 
     las = laspy.LasData(header)
