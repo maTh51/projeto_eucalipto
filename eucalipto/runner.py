@@ -459,11 +459,11 @@ def run_pipeline(cfg: PipelineConfig) -> Dict[str, str]:
 
     if cfg.pipeline_mode == "ff3d_full":
         points, tree_id, trunk_leaf, mapping = _run_ff3d_mode(cfg, resolved.paths)
-        manifest["modules_executed"] = ["ff3d", "metrics"]
+        manifest["modules_executed"] = ["ff3d"]
         treeinfo_path = None
     elif cfg.pipeline_mode in {"treeiso_leafwood", "treeiso_leafwood_rctqsm"}:
         points, tree_id, trunk_leaf, mapping = _run_treeiso_leafwood_mode(cfg, resolved.paths)
-        manifest["modules_executed"] = ["treeiso", "leafwood", "metrics"]
+        manifest["modules_executed"] = ["treeiso", "leafwood"]
         treeinfo_path = None
     elif cfg.pipeline_mode in {"rayextract_full", "rct_qsm_metrics"}:
         points, tree_id, trunk_leaf, mapping, treeinfo_path = _run_rayextract_full(cfg)
@@ -473,19 +473,18 @@ def run_pipeline(cfg: PipelineConfig) -> Dict[str, str]:
 
     manifest["field_mapping"] = mapping
 
-    if cfg.pipeline_mode in {"rayextract_full", "rct_qsm_metrics"} and treeinfo_path is not None:
-        rows = _parse_treeinfo_metrics(
-            treeinfo_path=treeinfo_path,
-            wood_density=cfg.providers.get("metrics", {}).get("wood_density_kg_m3"),
-        )
+    if cfg.pipeline_mode in {"rayextract_full", "rct_qsm_metrics"}:
+        if treeinfo_path is not None:
+            rows = _parse_treeinfo_metrics(
+                treeinfo_path=treeinfo_path,
+                wood_density=cfg.providers.get("metrics", {}).get("wood_density_kg_m3"),
+            )
+        else:
+            rows = []
+        metrics_path = write_metrics_csv(output_dir, rows)
     else:
-        rows = _collect_metrics(
-            points_xyz=points,
-            tree_id=tree_id,
-            trunk_leaf_label=trunk_leaf,
-            metric_provider="canonical_metrics",
-            wood_density=cfg.providers.get("metrics", {}).get("wood_density_kg_m3"),
-        )
+        metrics_path = None
+
     cloud_path = write_canonical_cloud(
         output_dir=output_dir,
         points_xyz=points,
@@ -494,13 +493,13 @@ def run_pipeline(cfg: PipelineConfig) -> Dict[str, str]:
         source_format=cfg.input.format,
         cloud_format=cfg.output.cloud_format,
     )
-    metrics_path = write_metrics_csv(output_dir, rows)
     manifest_path = write_run_manifest(output_dir, manifest)
 
     return {
         "classified_cloud": str(cloud_path),
-        "metrics_csv": str(metrics_path),
+        "metrics_csv": str(metrics_path) if metrics_path is not None else None,
         "manifest": str(manifest_path),
     }
+
 
 

@@ -115,6 +115,7 @@ def compare_method_combinations(
     wood_density_kg_m3: float = 900.0,
     dbh_methods: Sequence[str] = DEFAULT_DBH_METHODS,
     volume_methods_list: Sequence[str] = DEFAULT_VOLUME_METHODS,
+    save_mesh_dir: str | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Evaluate all DBH/volume combinations for a single cloud."""
     from eucalipto import dbh_methods as dbh_methods_module
@@ -130,6 +131,13 @@ def compare_method_combinations(
     dbh_rows: list[dict[str, object]] = []
     combo_rows: list[dict[str, object]] = []
 
+    # Dictionary to collect meshes for each (dbh_method, volume_method) combo
+    combo_meshes = {}
+    if save_mesh_dir is not None:
+        for dbh_m in dbh_methods:
+            for vol_m in volume_methods_list:
+                combo_meshes[(dbh_m, vol_m)] = []
+
     for tree_id in sorted(np.unique(tree_ids)):
         mask = (tree_ids == tree_id) & (trunk_leaf == trunk_label)
         trunk_pts = pts[mask]
@@ -139,6 +147,15 @@ def compare_method_combinations(
         trunk_pts_rel = trunk_pts.copy()
         trunk_pts_rel[:, 2] -= trunk_pts_rel[:, 2].min()
         height_m = float(trunk_pts_rel[:, 2].max())
+
+        # Unique color for this tree in the plot meshes
+        colors_palette = [
+            (255, 0, 0), (0, 255, 0), (0, 0, 255),
+            (255, 255, 0), (255, 0, 255), (0, 255, 255),
+            (255, 128, 0), (255, 0, 128), (128, 255, 0),
+            (0, 255, 128), (128, 0, 255), (0, 128, 255)
+        ]
+        tree_color = colors_palette[int(tree_id) % len(colors_palette)]
 
         dbh_results: dict[str, tuple[float | None, dict[str, object] | None]] = {}
         for dbh_method in dbh_methods:
@@ -188,6 +205,8 @@ def compare_method_combinations(
                             height_m=height_m,
                             method=volume_method,
                             wood_density_kg_m3=wood_density_kg_m3,
+                            generate_mesh=(save_mesh_dir is not None),
+                            mesh_color=tree_color,
                         )
                         commercial_info = volume_methods_module.estimate_volume(
                             commercial_pts,
@@ -201,12 +220,23 @@ def compare_method_combinations(
                             trunk_pts_rel,
                             method=volume_method,
                             wood_density_kg_m3=wood_density_kg_m3,
+                            generate_mesh=(save_mesh_dir is not None),
+                            mesh_color=tree_color,
                         )
                         commercial_info = volume_methods_module.estimate_volume(
                             commercial_pts,
                             method=volume_method,
                             wood_density_kg_m3=wood_density_kg_m3,
                         )
+
+                    # Collect the generated mesh for total volume estimation
+                    if save_mesh_dir is not None and total_info is not None and "mesh" in total_info:
+                        z_offset = float(trunk_pts[:, 2].min())
+                        v = total_info["mesh"]["vertices"].copy()
+                        v[:, 2] += z_offset
+                        f = total_info["mesh"]["faces"]
+                        c = total_info["mesh"]["colors"]
+                        combo_meshes[(dbh_method, volume_method)].append((v, f, c))
 
                     volume_status = "ok"
                 except Exception as exc:
@@ -233,6 +263,30 @@ def compare_method_combinations(
                         "n_commercial_pts": int(commercial_pts.shape[0]),
                     }
                 )
+
+    if save_mesh_dir is not None:
+        import os
+        os.makedirs(save_mesh_dir, exist_ok=True)
+        for (dbh_m, vol_m), mesh_list in combo_meshes.items():
+            if mesh_list:
+                all_v = []
+                all_f = []
+                all_c = []
+                v_offset = 0
+                for v, f, c in mesh_list:
+                    all_v.append(v)
+                    all_f.append(f + v_offset)
+                    all_c.append(c)
+                    v_offset += len(v)
+
+                merged_v = np.vstack(all_v)
+                merged_f = np.vstack(all_f)
+                merged_c = np.vstack(all_c)
+
+                cloud_name = Path(cloud_path).stem
+                output_ply = Path(save_mesh_dir) / f"{cloud_name}_mesh_{dbh_m}_{vol_m}.ply"
+                volume_methods_module.save_ply_mesh(str(output_ply), merged_v, merged_f, merged_c)
+                print(f"✓ Saved merged tree meshes to {output_ply}")
 
     return pd.DataFrame(dbh_rows), pd.DataFrame(combo_rows)
 
