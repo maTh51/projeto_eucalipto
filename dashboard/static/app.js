@@ -4,6 +4,7 @@
 const API_BASE = window.location.origin;
 
 let currentLoadedFile = null;
+let currentMetadata = null;
 let currentTreeData = null;
 let activePointCloudObj = null;
 let activeMeshObj = null;
@@ -81,6 +82,8 @@ function initUI() {
     document.getElementById("btn-load-file").addEventListener("click", handleLoadFile);
     document.getElementById("btn-calculate").addEventListener("click", handleCalculate);
     document.getElementById("btn-reset-cam").addEventListener("click", resetCamera);
+    document.getElementById("btn-show-plot").addEventListener("click", handleShowPlot);
+    document.getElementById("color-mode-select").addEventListener("change", handleColorModeChange);
     
     // File upload elements
     const fileUploadBtn = document.getElementById("btn-upload-file");
@@ -134,6 +137,14 @@ function initUI() {
         toggleMeshBtn.classList.toggle("active");
         if (activeMeshObj) {
             activeMeshObj.visible = toggleMeshBtn.classList.contains("active");
+        }
+    });
+
+    const toggleLabelsBtn = document.getElementById("toggle-labels");
+    toggleLabelsBtn.addEventListener("click", () => {
+        toggleLabelsBtn.classList.toggle("active");
+        if (typeof updateHTMLLabels === "function") {
+            updateHTMLLabels();
         }
     });
 
@@ -290,6 +301,7 @@ async function handleFileUpload(e) {
 
 function handleLoadedMetadata(data) {
     currentLoadedFile = data.filepath;
+    currentMetadata = data;
     
     // Update header status
     const statusDot = document.querySelector(".status-dot");
@@ -304,6 +316,7 @@ function handleLoadedMetadata(data) {
     });
     
     treeSelect.disabled = false;
+    document.getElementById("btn-show-plot").disabled = false;
     document.getElementById("dbh-method").disabled = false;
     document.getElementById("volume-method").disabled = false;
     document.getElementById("wood-density").disabled = false;
@@ -316,6 +329,9 @@ function handleLoadedMetadata(data) {
     batchResults = [];
     document.getElementById("macro-summary-section").style.display = "none";
     document.getElementById("macro-table-section").style.display = "none";
+    
+    const errBanner = document.getElementById("single-tree-error-banner");
+    if (errBanner) errBanner.style.display = "none";
     
     // Clear viewport and render the plot point cloud
     clearMesh();
@@ -345,6 +361,9 @@ async function handleTreeChange() {
         
         document.getElementById("btn-calculate").disabled = false;
         clearMetricsDisplay();
+        
+        const errBanner = document.getElementById("single-tree-error-banner");
+        if (errBanner) errBanner.style.display = "none";
         
         printLog(`Fetched Tree ID: #${treeId}`, "success");
         printLog(`Points: ${data.num_points.toLocaleString()} | Height: ${data.bounds.height.toFixed(2)}m`, "log");
@@ -387,6 +406,9 @@ async function handleCalculate() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || "Calculation error.");
         
+        const errBanner = document.getElementById("single-tree-error-banner");
+        if (errBanner) errBanner.style.display = "none";
+        
         // Display metrics
         document.getElementById("result-dbh").innerText = data.dbh_cm ? data.dbh_cm.toFixed(1) : "N/A";
         document.getElementById("result-height").innerText = data.height_m.toFixed(1);
@@ -401,11 +423,40 @@ async function handleCalculate() {
             renderFittedMesh(data.mesh.vertices, data.mesh.faces, data.mesh.colors);
         } else {
             clearMesh();
-            printLog("Warning: No 3D mesh generated.", "error");
+            printLog("Warning: No 3D mesh generated.", "comment");
         }
     } catch (err) {
+        // Reset metrics to show failure values gracefully
+        document.getElementById("result-dbh").innerText = "N/A";
+        if (currentTreeData && currentTreeData.bounds) {
+            document.getElementById("result-height").innerText = currentTreeData.bounds.height.toFixed(1);
+        } else {
+            document.getElementById("result-height").innerText = "N/A";
+        }
+        document.getElementById("result-volume").innerText = "N/A";
+        document.getElementById("result-mass").innerText = "N/A";
+        
+        clearMesh();
+        
         printLog(`Estimation Error: ${err.message}`, "error");
-        alert(`Calculation failed: ${err.message}`);
+        
+        // Provide helpful diagnostic comments/hints
+        let hintText = "";
+        if (err.message.includes("dbh_cm e height_m")) {
+            hintText = "DBH calculation returned N/A (failed). Cylinder volume requires a valid DBH. Adjust RANSAC parameters or slice thickness to obtain a DBH.";
+            printLog("Hint: " + hintText, "comment");
+        } else if (err.message.includes("slices")) {
+            hintText = "Axis profile / taper / frustum slice processing found insufficient points. Try increasing slice thickness or lowering minimum point requirements.";
+            printLog("Hint: " + hintText, "comment");
+        } else {
+            hintText = "Try adjusting method parameters or choosing an alternative reconstruction algorithm.";
+        }
+        
+        const errBanner = document.getElementById("single-tree-error-banner");
+        if (errBanner) {
+            errBanner.style.display = "block";
+            errBanner.innerHTML = `<i class="bx bx-error-circle"></i> <strong>Estimation Failed:</strong> ${err.message}<br><small>${hintText}</small>`;
+        }
     } finally {
         hideLoading();
     }
@@ -540,6 +591,19 @@ function initThreeJS() {
         container.innerHTML = "";
         container.appendChild(renderer.domElement);
         
+        // Recreate overlay container dynamically to prevent container.innerHTML from wiping it out
+        const overlay = document.createElement("div");
+        overlay.id = "labels-overlay-container";
+        overlay.style.position = "absolute";
+        overlay.style.top = "0";
+        overlay.style.left = "0";
+        overlay.style.width = "100%";
+        overlay.style.height = "100%";
+        overlay.style.pointerEvents = "none";
+        overlay.style.overflow = "hidden";
+        overlay.style.zIndex = "10";
+        container.appendChild(overlay);
+        
         // Lighting
         const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
         scene.add(ambientLight);
@@ -575,6 +639,9 @@ function initThreeJS() {
             requestAnimationFrame(animate);
             if (controls) controls.update();
             renderer.render(scene, camera);
+            if (typeof updateHTMLLabels === "function") {
+                updateHTMLLabels();
+            }
         }
         animate();
     } catch (err) {
@@ -584,32 +651,91 @@ function initThreeJS() {
     }
 }
 
+function handleShowPlot() {
+    if (!currentMetadata) return;
+    
+    // Reset tree selector in sidebar
+    document.getElementById("tree-select").value = "";
+    document.getElementById("btn-calculate").disabled = true;
+    
+    // Reset current tree state
+    currentTreeData = null;
+    clearMesh();
+    clearMetricsDisplay();
+    
+    // Re-render plot point cloud & plot meshes if they exist
+    renderPlotPointCloud(currentMetadata.plot_points, currentMetadata.plot_colors, currentMetadata.plot_is_trunk);
+    if (batchResults.length > 0) {
+        renderPlotMeshes(batchResults);
+    }
+    
+    printLog("Switched back to full plot macro view.", "comment");
+}
+
+function handleColorModeChange() {
+    if (currentTreeData) {
+        renderPointCloud(currentTreeData.points, currentTreeData.colors, currentTreeData.is_trunk);
+    } else if (currentMetadata) {
+        renderPlotPointCloud(currentMetadata.plot_points, currentMetadata.plot_colors, currentMetadata.plot_is_trunk);
+    }
+}
+
 function renderPlotPointCloud(points, colors, isTrunk) {
     if (!isThreeJSActive || !scene) return;
     if (activePointCloudObj) scene.remove(activePointCloudObj);
     
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(points.flat());
-    const colorArray = new Float32Array(points.length * 3);
+    const colorMode = document.getElementById("color-mode-select").value;
+    const plotTreeIds = currentMetadata ? currentMetadata.plot_tree_ids : null;
     
-    // Default color gradient by height or loaded RGB
+    let filteredPoints = [];
+    let filteredColors = [];
+    
     for (let i = 0; i < points.length; i++) {
-        if (colors && colors[i]) {
-            colorArray[i * 3] = colors[i][0] / 255;
-            colorArray[i * 3 + 1] = colors[i][1] / 255;
-            colorArray[i * 3 + 2] = colors[i][2] / 255;
-        } else {
-            // Plot heights gradient (green to teal)
-            const z = points[i][2];
-            const zNorm = Math.min(1.0, Math.max(0.0, z / 30.0));
-            colorArray[i * 3] = 0.1;
-            colorArray[i * 3 + 1] = 0.3 + 0.6 * zNorm;
-            colorArray[i * 3 + 2] = 0.4 + 0.5 * (1.0 - zNorm);
+        const isTrunkPt = isTrunk && isTrunk[i] === 1;
+        if (colorMode === "trunk" && isTrunk && !isTrunkPt) {
+            continue; // Skip canopy points in trunk-only mode
         }
+        
+        filteredPoints.push(points[i][0], points[i][1], points[i][2]);
+        
+        let r, g, b;
+        if (colorMode === "instance" && plotTreeIds) {
+            const ptTreeId = plotTreeIds[i];
+            const tColor = getTreeColor(ptTreeId);
+            r = tColor[0] / 255;
+            g = tColor[1] / 255;
+            b = tColor[2] / 255;
+        } else if (colorMode === "class" && isTrunk) {
+            // Semantic segregation colors: orange/brown for trunk, green for leaves
+            if (isTrunkPt) {
+                r = 210 / 255;
+                g = 105 / 255;
+                b = 30 / 255;
+            } else {
+                r = 34 / 255;
+                g = 139 / 255;
+                b = 34 / 255;
+            }
+        } else {
+            if (colors && colors[i]) {
+                r = colors[i][0] / 255;
+                g = colors[i][1] / 255;
+                b = colors[i][2] / 255;
+            } else {
+                // Plot heights gradient (green to teal)
+                const z = points[i][2];
+                const zNorm = Math.min(1.0, Math.max(0.0, z / 30.0));
+                r = 0.1;
+                g = 0.3 + 0.6 * zNorm;
+                b = 0.4 + 0.5 * (1.0 - zNorm);
+            }
+        }
+        filteredColors.push(r, g, b);
     }
     
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(filteredPoints, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(filteredColors, 3));
     
     const pSize = parseFloat(document.getElementById("point-size-slider").value) / 100;
     const material = new THREE.PointsMaterial({
@@ -634,24 +760,56 @@ function renderPointCloud(points, colors, isTrunk) {
     if (!isThreeJSActive || !scene) return;
     if (activePointCloudObj) scene.remove(activePointCloudObj);
     
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(points.flat());
-    const colorArray = new Float32Array(colors.length * 3);
+    const colorMode = document.getElementById("color-mode-select").value;
     
-    for (let i = 0; i < colors.length; i++) {
-        if (isTrunk[i] === 1) {
-            colorArray[i * 3] = 0.0;
-            colorArray[i * 3 + 1] = 0.8;
-            colorArray[i * 3 + 2] = 0.5;
-        } else {
-            colorArray[i * 3] = colors[i][0] / 255;
-            colorArray[i * 3 + 1] = colors[i][1] / 255;
-            colorArray[i * 3 + 2] = colors[i][2] / 255;
+    let filteredPoints = [];
+    let filteredColors = [];
+    
+    for (let i = 0; i < points.length; i++) {
+        const isTrunkPt = isTrunk[i] === 1;
+        if (colorMode === "trunk" && !isTrunkPt) {
+            continue; // Skip canopy points in trunk-only mode
         }
+        
+        filteredPoints.push(points[i][0], points[i][1], points[i][2]);
+        
+        let r, g, b;
+        if (colorMode === "instance" && currentTreeData) {
+            const tColor = getTreeColor(currentTreeData.tree_id);
+            r = tColor[0] / 255;
+            g = tColor[1] / 255;
+            b = tColor[2] / 255;
+        } else if (colorMode === "class") {
+            // Semantic segregation colors: orange/brown for trunk, green for leaves
+            if (isTrunkPt) {
+                r = 210 / 255;
+                g = 105 / 255;
+                b = 30 / 255;
+            } else {
+                r = 34 / 255;
+                g = 139 / 255;
+                b = 34 / 255;
+            }
+        } else {
+            if (colors && colors[i]) {
+                r = colors[i][0] / 255;
+                g = colors[i][1] / 255;
+                b = colors[i][2] / 255;
+            } else {
+                // Height-based gradient (Teal to green)
+                const z = points[i][2];
+                const zNorm = Math.min(1.0, Math.max(0.0, z / 25.0));
+                r = 0.1;
+                g = 0.4 + 0.5 * zNorm;
+                b = 0.6 - 0.2 * zNorm;
+            }
+        }
+        filteredColors.push(r, g, b);
     }
     
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colorArray, 3));
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(filteredPoints, 3));
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(filteredColors, 3));
     
     const pSize = parseFloat(document.getElementById("point-size-slider").value) / 100;
     const material = new THREE.PointsMaterial({
@@ -770,14 +928,19 @@ function clearMesh() {
 }
 
 function resetCamera() {
-    if (!isThreeJSActive || !controls || !currentTreeData) return;
+    if (!isThreeJSActive || !controls) return;
     
-    const bounds = currentTreeData.bounds;
-    const height = bounds.height;
-    
-    controls.target.set(0, 0, height / 2);
-    camera.position.set(0, -height * 1.5, height);
-    controls.update();
+    if (currentTreeData && currentTreeData.bounds) {
+        const bounds = currentTreeData.bounds;
+        const height = bounds.height;
+        controls.target.set(0, 0, height / 2);
+        camera.position.set(0, -height * 1.5, height);
+        controls.update();
+    } else if (currentMetadata) {
+        controls.target.set(0, 0, 10);
+        camera.position.set(0, -50, 40);
+        controls.update();
+    }
 }
 
 // =====================================================================
@@ -822,4 +985,81 @@ function clearMetricsDisplay() {
 
 function PathBasename(path) {
     return path.split(/[\\/]/).pop();
+}
+
+function getTreeColor(treeId) {
+    if (treeId === undefined || treeId === null || treeId < 0) {
+        return [128, 128, 128]; // Default gray for unassigned points
+    }
+    // Knuth's multiplicative hash to disperse colors vibrantly
+    let hash = (treeId * 2654435761) & 0xFFFFFFFF;
+    let r = (hash & 0xFF0000) >> 16;
+    let g = (hash & 0x00FF00) >> 8;
+    let b = (hash & 0x0000FF);
+    
+    // Scale and normalize colors to keep them vibrant and clear against the dark background (0x0a0d16)
+    let max = Math.max(r, g, b, 1);
+    r = Math.floor(60 + (r / max) * 195);
+    g = Math.floor(60 + (g / max) * 195);
+    b = Math.floor(60 + (b / max) * 195);
+    
+    return [r, g, b];
+}
+
+function updateHTMLLabels() {
+    if (!isThreeJSActive || !scene || !camera) return;
+    
+    const labelContainer = document.getElementById("labels-overlay-container");
+    if (!labelContainer) return;
+    
+    const showLabels = document.getElementById("toggle-labels") && document.getElementById("toggle-labels").classList.contains("active");
+    if (!showLabels || !currentMetadata || !currentMetadata.tree_centers) {
+        labelContainer.innerHTML = "";
+        return;
+    }
+    
+    // If a single tree is active (Single inspect view), do not show macro labels to avoid confusion
+    if (currentTreeData) {
+        labelContainer.innerHTML = "";
+        return;
+    }
+    
+    // Project and position each tree label based on its max Z (top center) relative coordinates
+    const width = labelContainer.clientWidth;
+    const height = labelContainer.clientHeight;
+    
+    const statuses = {};
+    batchResults.forEach(r => {
+        statuses[r.tree_id] = r.status;
+    });
+    
+    let html = "";
+    
+    for (const [tid, center] of Object.entries(currentMetadata.tree_centers)) {
+        const vec = new THREE.Vector3(center[0], center[1], center[2]);
+        vec.project(camera);
+        
+        if (vec.z > 1) continue; // Behind camera
+        
+        const x = (vec.x * 0.5 + 0.5) * width;
+        const y = (-(vec.y * 0.5) + 0.5) * height;
+        
+        const status = statuses[tid];
+        let labelClass = "tree-label-neutral";
+        let statusText = "";
+        
+        if (status === "success") {
+            labelClass = "tree-label-success";
+            statusText = " &bull; Success";
+        } else if (status === "failed") {
+            labelClass = "tree-label-failed";
+            statusText = " &bull; Failed";
+        }
+        
+        html += `<div class="tree-3d-label ${labelClass}" style="position: absolute; left: ${x}px; top: ${y}px; transform: translate(-50%, -100%);">
+            #${tid}${statusText}
+        </div>`;
+    }
+    
+    labelContainer.innerHTML = html;
 }

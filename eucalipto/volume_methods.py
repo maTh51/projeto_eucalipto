@@ -263,13 +263,14 @@ def estimate_taper_radii(points: np.ndarray,
 
 
 def estimate_volume_taper(points: np.ndarray,
-                          wood_density_kg_m3: Optional[float] = None) -> dict:
+                          wood_density_kg_m3: Optional[float] = None,
+                          **kwargs) -> dict:
     """Estimate volume by integrating a taper curve r(h).
 
     A curva r(h) é ajustada com um polinômio (grau até 3) sobre os
     raios estimados em diferentes alturas usando RANSAC em fatias.
     """
-    heights_rel, radii, trunk_height = estimate_taper_radii(points)
+    heights_rel, radii, trunk_height = estimate_taper_radii(points, **kwargs)
     if heights_rel.size < 3:
         raise ValueError("Insuficientes amostras de raio para o método taper.")
 
@@ -303,13 +304,14 @@ def estimate_volume_taper(points: np.ndarray,
 
 
 def estimate_volume_frustum(points: np.ndarray,
-                            wood_density_kg_m3: Optional[float] = None) -> dict:
+                            wood_density_kg_m3: Optional[float] = None,
+                            **kwargs) -> dict:
     """Estimate volume assuming a frustum (cone truncado).
 
     Os raios na base e no topo são obtidos a partir da primeira e da
     última amostra da curva de taper.
     """
-    heights_rel, radii, trunk_height = estimate_taper_radii(points)
+    heights_rel, radii, trunk_height = estimate_taper_radii(points, **kwargs)
     if radii.size < 2:
         raise ValueError("Insuficientes amostras de raio para o método frustum.")
 
@@ -493,7 +495,8 @@ def estimate_volume(points,
                         }
             elif method == "frustum":
                 if points is not None and points.shape[0] > 0:
-                    heights_rel, radii, trunk_height = estimate_taper_radii(points)
+                    taper_kwargs = {k: v for k, v in kwargs.items() if k != "wood_density_kg_m3"}
+                    heights_rel, radii, trunk_height = estimate_taper_radii(points, **taper_kwargs)
                     if radii.size >= 2:
                         z_min = float(points[:, 2].min())
                         xy_center = np.median(points[:, :2], axis=0)
@@ -505,7 +508,8 @@ def estimate_volume(points,
                         mesh_data = {"vertices": v, "faces": f, "colors": c}
             elif method == "taper":
                 if points is not None and points.shape[0] > 0:
-                    heights_rel, radii, trunk_height = estimate_taper_radii(points)
+                    taper_kwargs = {k: v for k, v in kwargs.items() if k != "wood_density_kg_m3"}
+                    heights_rel, radii, trunk_height = estimate_taper_radii(points, **taper_kwargs)
                     if radii.size >= 3:
                         degree = int(min(3, len(radii) - 1))
                         coeffs = np.polyfit(heights_rel, radii, degree)

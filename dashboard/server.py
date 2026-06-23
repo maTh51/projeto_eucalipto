@@ -145,6 +145,11 @@ def _prepare_loaded_cloud(filepath: str, points: np.ndarray, extras: Dict[str, n
             display_trunk = (cache.trunk_labels[::step] == 1).astype(int).tolist()
         else:
             display_trunk = None
+
+        if cache.tree_ids is not None:
+            display_tree_ids = cache.tree_ids[::step].tolist()
+        else:
+            display_tree_ids = None
     else:
         display_pts = points
         if "red" in extras and "green" in extras and "blue" in extras:
@@ -160,10 +165,27 @@ def _prepare_loaded_cloud(filepath: str, points: np.ndarray, extras: Dict[str, n
         else:
             display_trunk = None
 
+        if cache.tree_ids is not None:
+            display_tree_ids = cache.tree_ids.tolist()
+        else:
+            display_tree_ids = None
+
     display_pts_centered = display_pts.copy()
     display_pts_centered[:, 0] -= cache.center_x
     display_pts_centered[:, 1] -= cache.center_y
     display_pts_centered[:, 2] -= cache.min_z
+
+    # Compute tree centers for HTML overlay labeling (Max Z is the top of each tree)
+    tree_centers = {}
+    if tree_id_col is not None and cache.tree_ids is not None:
+        for tid in cache.unique_tree_ids:
+            t_mask = cache.tree_ids == tid
+            t_pts = points[t_mask]
+            if t_pts.shape[0] > 0:
+                cx = float(np.median(t_pts[:, 0]) - cache.center_x)
+                cy = float(np.median(t_pts[:, 1]) - cache.center_y)
+                cz = float(t_pts[:, 2].max() - cache.min_z)
+                tree_centers[int(tid)] = [cx, cy, cz]
 
     return {
         "status": "success",
@@ -177,7 +199,9 @@ def _prepare_loaded_cloud(filepath: str, points: np.ndarray, extras: Dict[str, n
         "tree_ids": cache.unique_tree_ids[:200],
         "plot_points": display_pts_centered.tolist(),
         "plot_colors": display_colors,
-        "plot_is_trunk": display_trunk
+        "plot_is_trunk": display_trunk,
+        "plot_tree_ids": display_tree_ids,
+        "tree_centers": tree_centers
     }
 
 @app.post("/api/load")
@@ -292,6 +316,8 @@ def run_estimation(req: EstimateRequest):
             method=req.dbh_method,
             **req.dbh_params
         )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=f"DBH error: {str(ve)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"DBH error: {str(e)}")
 
@@ -310,6 +336,8 @@ def run_estimation(req: EstimateRequest):
             wood_density_kg_m3=req.wood_density_kg_m3,
             **req.volume_params
         )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=f"Volume error: {str(ve)}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Volume error: {str(e)}")
 

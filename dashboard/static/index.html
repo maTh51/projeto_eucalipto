@@ -63,6 +63,9 @@
                             </select>
                         </div>
                     </div>
+                    <button id="btn-show-plot" class="btn btn-primary" style="margin-top: 12px; width: 100%;" disabled>
+                        <i class="bx bx-world"></i> Show Full Plot
+                    </button>
                 </div>
 
                 <!-- DBH METHOD SETTINGS -->
@@ -125,7 +128,8 @@
             <!-- CENTER WORKSPACE: 3D VIEWPORT -->
             <section class="viewport-container">
                 <!-- 3D WebGL Canvas -->
-                <div id="canvas-container">
+                <div id="canvas-container" style="position: relative;">
+                    <div id="labels-overlay-container" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; z-index: 10;"></div>
                     <div class="viewer-placeholder" id="viewer-placeholder">
                         <i class="bx bx-cube-alt placeholder-icon animate-float"></i>
                         <h3>Interactive 3D Preview</h3>
@@ -137,8 +141,19 @@
                 <div class="canvas-toolbar" id="canvas-toolbar" style="display: none;">
                     <button id="btn-reset-cam" class="tool-btn" title="Reset Camera"><i class="bx bx-refresh"></i></button>
                     <div class="tool-divider"></div>
-                    <button id="toggle-points" class="tool-btn active" title="Toggle Point Cloud"><i class="bx bx-dots-vertical-rounded"></i></button>
-                    <button id="toggle-mesh" class="tool-btn active" title="Toggle Fitted Mesh"><i class="bx bx-shapes"></i></button>
+                    <button id="toggle-points" class="tool-btn active" title="Toggle Point Cloud"><i class="bx bx-leaf"></i></button>
+                    <button id="toggle-mesh" class="tool-btn active" title="Toggle Fitted Mesh"><i class="bx bx-cylinder"></i></button>
+                    <button id="toggle-labels" class="tool-btn" title="Toggle Tree ID Labels"><i class="bx bx-hash"></i></button>
+                    <div class="tool-divider"></div>
+                    <div class="tool-select-group">
+                        <span class="tool-label">View:</span>
+                        <select id="color-mode-select" class="tool-select">
+                            <option value="instance" selected>Tree Instances</option>
+                            <option value="class">Semantic Seg</option>
+                            <option value="rgb">RGB / Height</option>
+                            <option value="trunk">Trunk Only</option>
+                        </select>
+                    </div>
                     <div class="tool-divider"></div>
                     <div class="tool-slider-group">
                         <span class="tool-label">Point Size:</span>
@@ -198,6 +213,7 @@
                                 <span class="metric-unit">kg</span>
                             </div>
                         </div>
+                        <div id="single-tree-error-banner" class="error-banner" style="display: none;"></div>
                     </div>
 
                     <div class="panel-section flex-grow">
