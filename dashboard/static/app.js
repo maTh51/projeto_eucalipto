@@ -5,6 +5,7 @@ const API_BASE = window.location.origin;
 
 let currentLoadedFile = null;
 let currentMetadata = null;
+let currentColorMode = "rgb";
 let currentTreeData = null;
 let activePointCloudObj = null;
 let activeMeshObj = null;
@@ -65,6 +66,37 @@ const volumeMethods = {
     ]
 };
 
+// Help/Tooltip Descriptions for Methods and Parameters
+const methodDescriptions = {
+    dbh: {
+        ensemble: "<b>Multi-Slice Ensemble (RANSAC)</b>: Extracts multiple horizontal slices around breast height, performs RANSAC circle fitting on each slice, and averages the computed diameters. Highly robust against lower branch foliage and scanner noise.",
+        single_ransac: "<b>Single RANSAC Circle</b>: Extracts a single horizontal slice at breast height (1.3m) and fits a circle using RANSAC to detect and ignore outlier points.",
+        ls: "<b>Least Squares Fit</b>: Fits a circle to a slice at breast height (1.3m) using algebraic least squares. Fast, but very sensitive to branches, leaves, and noise points."
+    },
+    volume: {
+        cylinder: "<b>Cylinder Model</b>: Simplest method. Models the trunk as a straight, uniform cylinder with a constant diameter equal to DBH up to the tree top. Ignores natural taper (typically overestimates volume).",
+        axis_profile: "<b>Axis Profile Slices</b>: Divides the trunk into vertical slices, estimates the radius in each height slice using point distance percentiles relative to the trunk axis, and sums up the slice volumes.",
+        voxel: "<b>Occupied Voxel Grid</b>: Spaces the tree into small 3D grid cubes (voxels) and sums the volume of occupied voxels. Extremely flexible for canopies, but highly sensitive to voxel size and point density.",
+        frustum: "<b>Truncated Cone Frustum</b>: Divides trunk into segments and fits truncated cones (frustums) using RANSAC circle fitting at segment boundaries. Realistic representation of tree taper.",
+        taper: "<b>Polynomial Taper Integration</b>: Fits a continuous mathematical taper curve along the height based on radius measurements, then integrates the curve to compute precise volume."
+    }
+};
+
+const parameterDescriptions = {
+    breast_height_offset: "The height above ground (typically 1.3 meters) where the tree DBH (diameter) is measured.",
+    offset_range: "The vertical range around breast height (above and below 1.3m) used to extract point slices for diameter fitting.",
+    n_slices: "The number of slices to divide the target trunk section for ensemble DBH or profile volume analysis.",
+    slice_thickness: "The vertical thickness of each slice in meters. Thicker slices contain more points but average out details.",
+    ransac_thresh: "RANSAC inlier distance threshold in meters. Points closer than this to the model are considered valid.",
+    radius_min: "Minimum allowed trunk radius in meters. Helps filter out small noise structures.",
+    radius_max: "Maximum allowed trunk radius in meters. Prevents fitting overly large circles to sparse points.",
+    voxel_size: "Edge length of 3D voxel cubes in meters. Smaller voxels increase detail but require higher point density.",
+    radius_percentile: "The percentile distance from center axis to define trunk radius, ignoring sparse branch points.",
+    min_points_per_slice: "Minimum number of points required in a slice to perform circle estimation.",
+    n_height_samples: "Number of diameter measurements taken along the trunk for frustum/taper estimation.",
+    min_inliers: "Minimum number of RANSAC inliers required to accept a circle fit on a slice segment."
+};
+
 // =====================================================================
 // INITIALIZATION
 // =====================================================================
@@ -83,7 +115,17 @@ function initUI() {
     document.getElementById("btn-calculate").addEventListener("click", handleCalculate);
     document.getElementById("btn-reset-cam").addEventListener("click", resetCamera);
     document.getElementById("btn-show-plot").addEventListener("click", handleShowPlot);
-    document.getElementById("color-mode-select").addEventListener("change", handleColorModeChange);
+    
+    // Bind view toggle segment buttons
+    const viewButtons = document.querySelectorAll(".view-toggle-btn");
+    viewButtons.forEach(btn => {
+        btn.addEventListener("click", () => {
+            viewButtons.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+            currentColorMode = btn.getAttribute("data-value");
+            handleColorModeChange();
+        });
+    });
     
     // File upload elements
     const fileUploadBtn = document.getElementById("btn-upload-file");
@@ -98,8 +140,14 @@ function initUI() {
     
     // Selects
     document.getElementById("tree-select").addEventListener("change", handleTreeChange);
-    document.getElementById("dbh-method").addEventListener("change", renderDBHSliders);
-    document.getElementById("volume-method").addEventListener("change", renderVolumeSliders);
+    document.getElementById("dbh-method").addEventListener("change", () => {
+        renderDBHSliders();
+        updateMethodTooltips();
+    });
+    document.getElementById("volume-method").addEventListener("change", () => {
+        renderVolumeSliders();
+        updateMethodTooltips();
+    });
     
     // Tab Triggers
     const tabButtons = document.querySelectorAll(".tab-btn");
@@ -160,6 +208,9 @@ function initUI() {
             activeMeshObj.material.opacity = parseFloat(e.target.value) / 100;
         }
     });
+    
+    // Initialize method tooltips on UI startup
+    updateMethodTooltips();
 }
 
 // Generate controls HTML
@@ -193,7 +244,20 @@ function createSliderElement(prefix, name, label, min, max, val, step) {
     
     const header = document.createElement("div");
     header.className = "slider-header";
-    header.innerHTML = `<span>${label}</span><span class="slider-val" id="${id}-val">${val}</span>`;
+    
+    // Look up param explanation
+    const desc = parameterDescriptions[name] || "Adjust this parameter to tune calculation.";
+    
+    header.innerHTML = `
+        <span style="display: inline-flex; align-items: center;">
+            ${label}
+            <span class="tooltip">
+                <i class="bx bx-help-circle help-icon"></i>
+                <span class="tooltiptext">${desc}</span>
+            </span>
+        </span>
+        <span class="slider-val" id="${id}-val">${val}</span>
+    `;
     
     const slider = document.createElement("input");
     slider.type = "range";
@@ -210,6 +274,21 @@ function createSliderElement(prefix, name, label, min, max, val, step) {
     group.appendChild(header);
     group.appendChild(slider);
     return group;
+}
+
+// Update the explanation text inside DBH and Volume method select tooltips
+function updateMethodTooltips() {
+    const dbhVal = document.getElementById("dbh-method").value;
+    const dbhTooltip = document.getElementById("dbh-method-tooltip");
+    if (dbhTooltip) {
+        dbhTooltip.innerHTML = methodDescriptions.dbh[dbhVal] || "Select a method to view details.";
+    }
+    
+    const volVal = document.getElementById("volume-method").value;
+    const volTooltip = document.getElementById("volume-method-tooltip");
+    if (volTooltip) {
+        volTooltip.innerHTML = methodDescriptions.volume[volVal] || "Select a method to view details.";
+    }
 }
 
 // Read parameters from UI
@@ -324,6 +403,7 @@ function handleLoadedMetadata(data) {
     
     renderDBHSliders();
     renderVolumeSliders();
+    updateMethodTooltips();
     
     // Reset batch view state
     batchResults = [];
@@ -500,8 +580,7 @@ async function handleRunBatch() {
         document.getElementById("macro-mean-dbh").innerText = s.mean_dbh_cm.toFixed(1);
         document.getElementById("macro-mean-height").innerText = s.mean_height_m.toFixed(1);
         
-        const biomassTons = (s.total_mass_kg / 1000).toFixed(1);
-        document.getElementById("macro-success-count").innerText = `${s.successful_count} / ${biomassTons} t`;
+        document.getElementById("macro-success-count").innerText = `${s.successful_count} / ${s.tree_count}`;
         
         // Render macro inventory table
         renderTable(data.results);
@@ -511,7 +590,7 @@ async function handleRunBatch() {
         
         printLog(`--- Batch Execution Completed ---`, "success");
         printLog(`Processed ${s.tree_count} trees in plot. Success rate: ${(s.successful_count / s.tree_count * 100).toFixed(0)}%`, "log");
-        printLog(`Total volume: ${s.total_volume_m3.toFixed(3)} m³ | Total biomass: ${biomassTons} tons`, "highlight");
+        printLog(`Total volume: ${s.total_volume_m3.toFixed(3)} m³`, "highlight");
     } catch (err) {
         printLog(`Batch Error: ${err.message}`, "error");
         alert(`Batch calculation failed: ${err.message}`);
@@ -684,7 +763,7 @@ function renderPlotPointCloud(points, colors, isTrunk) {
     if (!isThreeJSActive || !scene) return;
     if (activePointCloudObj) scene.remove(activePointCloudObj);
     
-    const colorMode = document.getElementById("color-mode-select").value;
+    const colorMode = currentColorMode;
     const plotTreeIds = currentMetadata ? currentMetadata.plot_tree_ids : null;
     
     let filteredPoints = [];
@@ -760,7 +839,7 @@ function renderPointCloud(points, colors, isTrunk) {
     if (!isThreeJSActive || !scene) return;
     if (activePointCloudObj) scene.remove(activePointCloudObj);
     
-    const colorMode = document.getElementById("color-mode-select").value;
+    const colorMode = currentColorMode;
     
     let filteredPoints = [];
     let filteredColors = [];

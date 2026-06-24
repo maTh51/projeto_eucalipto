@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Eucalipto LiDAR 3D Biometrics Dashboard</title>
+    <link rel="icon" type="image/jpeg" href="favicon.ico">
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -72,7 +73,13 @@
                 <div class="panel-section">
                     <h2 class="section-title"><i class="bx bx-circle"></i> DBH Calculation</h2>
                     <div class="form-group">
-                        <label for="dbh-method">Estimation Method:</label>
+                        <label for="dbh-method">
+                            Estimation Method:
+                            <span class="tooltip">
+                                <i class="bx bx-help-circle help-icon"></i>
+                                <span class="tooltiptext" id="dbh-method-tooltip">Select a DBH method to view details.</span>
+                            </span>
+                        </label>
                         <div class="select-wrapper">
                             <i class="bx bx-cog select-icon"></i>
                             <select id="dbh-method" disabled>
@@ -92,7 +99,13 @@
                 <div class="panel-section">
                     <h2 class="section-title"><i class="bx bx-cylinder"></i> Volume Calculation</h2>
                     <div class="form-group">
-                        <label for="volume-method">Reconstruction Method:</label>
+                        <label for="volume-method">
+                            Reconstruction Method:
+                            <span class="tooltip">
+                                <i class="bx bx-help-circle help-icon"></i>
+                                <span class="tooltiptext" id="volume-method-tooltip">Select a method to view details.</span>
+                            </span>
+                        </label>
                         <div class="select-wrapper">
                             <i class="bx bx-cog select-icon"></i>
                             <select id="volume-method" disabled>
@@ -105,7 +118,7 @@
                         </div>
                     </div>
 
-                    <div class="form-group">
+                    <div class="form-group" style="display: none;">
                         <label for="wood-density">Wood Density (kg/m³):</label>
                         <div class="input-wrapper">
                             <i class="bx bx-weight input-icon"></i>
@@ -147,12 +160,12 @@
                     <div class="tool-divider"></div>
                     <div class="tool-select-group">
                         <span class="tool-label">View:</span>
-                        <select id="color-mode-select" class="tool-select">
-                            <option value="instance" selected>Tree Instances</option>
-                            <option value="class">Semantic Seg</option>
-                            <option value="rgb">RGB / Height</option>
-                            <option value="trunk">Trunk Only</option>
-                        </select>
+                        <div class="view-toggle-group">
+                            <button class="view-toggle-btn active" data-value="rgb">RGB / Height</button>
+                            <button class="view-toggle-btn" data-value="instance">Tree Instances</button>
+                            <button class="view-toggle-btn" data-value="class">Semantic Seg</button>
+                            <button class="view-toggle-btn" data-value="trunk">Trunk Only</button>
+                        </div>
                     </div>
                     <div class="tool-divider"></div>
                     <div class="tool-slider-group">
@@ -207,7 +220,7 @@
                                 <span class="metric-value" id="result-volume">-</span>
                                 <span class="metric-unit">m³</span>
                             </div>
-                            <div class="metric-card">
+                            <div class="metric-card" style="display: none;">
                                 <span class="metric-label">Estimated Mass</span>
                                 <span class="metric-value" id="result-mass">-</span>
                                 <span class="metric-unit">kg</span>
@@ -261,9 +274,9 @@
                                 <span class="metric-unit">meters</span>
                             </div>
                             <div class="metric-card">
-                                <span class="metric-label">Stem Count / Biomass</span>
+                                <span class="metric-label">Stem Count</span>
                                 <span class="metric-value" id="macro-success-count">-</span>
-                                <span class="metric-unit">trees / tons</span>
+                                <span class="metric-unit">trees</span>
                             </div>
                         </div>
                     </div>
