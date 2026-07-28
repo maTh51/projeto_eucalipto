@@ -15,7 +15,14 @@ dependencies = [
   "scikit-learn",
   "pyransac3d",
   "pyyaml",
+  "fastapi",
+  "uvicorn",
+  "python-multipart",
 ]
+
+[tool.setuptools.packages.find]
+include = ["eucalipto*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+

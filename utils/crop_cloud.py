@@ -2,18 +2,9 @@ import laspy
 import numpy as np
 import os
 
-def recortar_nuvem_centro(input_file, output_file, cx, cy, lado_m=100, chunk_size=1_000_000):
-    # Calcula os limites do quadrado (Bounding Box 2D)
-    # Se o lado é 100m, recuamos 50m para cada lado a partir do centro
-    x_min = cx - (lado_m / 2)
-    x_max = cx + (lado_m / 2)
-    y_min = cy - (lado_m / 2)
-    y_max = cy + (lado_m / 2)
 
+def recortar_nuvem_centro(input_file, output_file, cx=None, cy=None, lado_m=100, chunk_size=1_000_000):
     print(f"Iniciando recorte de {lado_m}x{lado_m}m...")
-    print(f"Centro: X={cx}, Y={cy}")
-    print(f"Limites de X: {x_min:.2f} a {x_max:.2f}")
-    print(f"Limites de Y: {y_min:.2f} a {y_max:.2f}")
     
     if not os.path.exists(input_file):
         print(f"Erro: Arquivo '{input_file}' não encontrado.")
@@ -21,6 +12,25 @@ def recortar_nuvem_centro(input_file, output_file, cx, cy, lado_m=100, chunk_siz
 
     # Etapa 1: Leitura e Escrita em Chunks (Economiza muita RAM)
     with laspy.open(input_file) as infile:
+        if cx is None or cy is None:
+            x_min = infile.header.mins[0]
+            y_min = infile.header.mins[1]
+            x_max = x_min + lado_m
+            y_max = y_min + lado_m
+            print("cx/cy não informados; usando o canto inferior esquerdo da nuvem original.")
+        else:
+            # Calcula os limites do quadrado (Bounding Box 2D)
+            # Se o lado é 100m, recuamos 50m para cada lado a partir do centro
+            x_min = cx - (lado_m / 2)
+            x_max = cx + (lado_m / 2)
+            y_min = cy - (lado_m / 2)
+            y_max = cy + (lado_m / 2)
+
+            print(f"Centro: X={cx}, Y={cy}")
+
+        print(f"Limites de X: {x_min:.2f} a {x_max:.2f}")
+        print(f"Limites de Y: {y_min:.2f} a {y_max:.2f}")
+
         # Copia o cabeçalho exato do arquivo original (para não perder campos extras, intensidades, etc)
         header = infile.header
         
@@ -70,14 +80,15 @@ def recortar_nuvem_centro(input_file, output_file, cx, cy, lado_m=100, chunk_siz
 
 if __name__ == "__main__":
     # COLOQUE O NOME DO SEU ARQUIVO DE ENTRADA AQUI (pode ser .las ou .laz)
-    arquivo_input = "/mnt/scratch/matheuspimenta/canoa/cloud2.las" 
+    arquivo_input = "/mnt/scratch/matheuspimenta/euc/canoa/LiDAR/T63_5cm/terra_las/cloud1.las"
     
     # Nome do arquivo que será gerado
-    arquivo_output = "talhao_62_25x25.las" 
+    arquivo_output = "talhao_63_25x25.las" 
 
-    # Suas coordenadas de interesse
-    cx_alvo = 443096.70
-    cy_alvo = 8007612.78
+    # Se quiser recortar pelo centro, preencha cx_alvo e cy_alvo.
+    # Se deixar como None, o script usa o canto inferior esquerdo da nuvem.
+    cx_alvo = None
+    cy_alvo = None
 
     recortar_nuvem_centro(
         input_file=arquivo_input, 

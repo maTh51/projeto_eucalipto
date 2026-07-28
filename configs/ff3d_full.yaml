@@ -1,10 +1,10 @@
 schema_version: "1.0.0"
 pipeline_mode: "ff3d_full"
 input:
-  path: "/home/matheuspimenta/euc/projeto_eucalipto/talhao_62_25x25.las"
+  path: "/home/matheuspimenta/euc/projeto_eucalipto/talhao_63_parcela_509.las"
   format: "auto"
 output:
-  output_dir: "results/canoa/ff3d_full"
+  output_dir: "results/canoa/parcelas_t63/ff3d_full"
   cloud_format: "laz"
 runtime:
   docker_compose_profile: "ff3d"
