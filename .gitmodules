@@ -22,3 +22,6 @@
 	path = third_party/rayextract-manual
 	url = https://github.com/qforestlab/rayextract-manual.git
 	ignore = dirty
+[submodule "third_party/SegmentAnyTree"]
+	path = third_party/SegmentAnyTree
+	url = https://github.com/SmartForest-no/SegmentAnyTree.git
