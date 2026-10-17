@@ -1,7 +1,7 @@
 schema_version: "1.0.0"
 pipeline_mode: "ff3d_full"
 input:
-  path: "/home/matheuspimenta/euc/projeto_eucalipto/talhao_63_parcela_509.las"
+  path: "/home/matheuspimenta/euc/projeto_eucalipto/data/talhao_63_parcela_509.las"
   format: "auto"
 output:
   output_dir: "results/canoa/parcelas_t63/ff3d_full"

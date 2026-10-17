@@ -13,6 +13,7 @@ DEFAULT_DEPENDENCIES: Dict[str, str] = {
     "treeiso": "third_party/artemis_treeiso",
     "leafwood": "third_party/leaf-wood-segmentation-with-deep-learning",
     "rayextract_manual": "third_party/rayextract-manual",
+    "segment_any_tree": "third_party/SegmentAnyTree",
 }
 
 
