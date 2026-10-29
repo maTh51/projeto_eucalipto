@@ -25,7 +25,7 @@ def evaluate_config_on_subset(df_trees: pd.DataFrame, cfg_col: str):
 
 def find_best_global_config(df_train_trees: pd.DataFrame, cfg_cols: list):
     """
-    Find the configuration that minimizes RMSE on the training tree set.
+    Find the configuration that minimizes individual tree RMSE on the training tree set.
     """
     best_cfg = None
     best_rmse = float("inf")
@@ -37,10 +37,33 @@ def find_best_global_config(df_train_trees: pd.DataFrame, cfg_cols: list):
     return best_cfg, best_rmse
 
 
+def find_best_unbiased_config(df_train_trees: pd.DataFrame, cfg_cols: list, rmse_tolerance: float = 1.35):
+    """
+    Find the configuration that minimizes absolute relative bias |bias_pct| on the training tree set,
+    restricted to stable configurations whose tree RMSE is within `rmse_tolerance` of the minimum RMSE
+    (preventing high-variance methods with cancelling outliers from being selected).
+    """
+    _, min_rmse = find_best_global_config(df_train_trees, cfg_cols)
+    best_cfg = None
+    best_abs_bias = float("inf")
+    for cfg in cfg_cols:
+        metrics = evaluate_config_on_subset(df_train_trees, cfg)
+        if np.isnan(metrics["bias_pct"]) or np.isnan(metrics["rmse"]):
+            continue
+        if metrics["rmse"] <= min_rmse * rmse_tolerance and abs(metrics["bias_pct"]) < best_abs_bias:
+            best_abs_bias = abs(metrics["bias_pct"])
+            best_cfg = cfg
+    return best_cfg, best_abs_bias
+
+
 def run_leave_one_plot_out(df_trees: pd.DataFrame, df_field_all: pd.DataFrame,
                            df_parc: pd.DataFrame, cfg_cols: list):
     """
-    Execute 100% blind Leave-One-Plot-Out validation across all plots.
+    Execute 100% blind Leave-One-Plot-Out validation across all plots,
+    evaluating side-by-side:
+      - Mode 1A: Calibrated by Tree RMSE (min tree RMSE on train plots)
+      - Mode 1B: Calibrated by Volume Bias (min |bias_pct| on train plots)
+      - Mode 2:  Human-in-the-Loop / Oracle (best config per tree)
     """
     plot_ids = sorted(df_trees["plot_id"].unique())
     lopo_results = []
@@ -52,11 +75,13 @@ def run_leave_one_plot_out(df_trees: pd.DataFrame, df_field_all: pd.DataFrame,
         if len(df_test) == 0:
             continue
 
-        # 1. Mode 1: Calibrate optimal config strictly on training plots
+        # 1A. Calibrate optimal config by Tree RMSE on training plots
         best_cfg, train_rmse = find_best_global_config(df_train, cfg_cols)
-
-        # Evaluate on the blind test plot (tree level)
         test_metrics_global = evaluate_config_on_subset(df_test, best_cfg)
+
+        # 1B. Calibrate optimal config by Volume Bias on training plots
+        best_bias_cfg, train_abs_bias = find_best_unbiased_config(df_train, cfg_cols)
+        test_metrics_bias = evaluate_config_on_subset(df_test, best_bias_cfg)
 
         # 2. Mode 2: Human-in-the-Loop on test plot (oracle best per tree)
         human_vols = []
@@ -85,27 +110,36 @@ def run_leave_one_plot_out(df_trees: pd.DataFrame, df_field_all: pd.DataFrame,
         # Count living trees in plot from field inventory
         n_living = len(df_field_all[(df_field_all["PAR_CODIGO"] == test_pid) & df_field_all["has_gt_volume"]])
         mean_v_global = float(df_test[best_cfg].mean())
+        mean_v_bias   = float(df_test[best_bias_cfg].mean())
         mean_v_human  = float(np.mean(human_vols))
 
         extrap_global_ha = mean_v_global * n_living * exp_factor
+        extrap_bias_ha   = mean_v_bias * n_living * exp_factor
         extrap_human_ha  = mean_v_human * n_living * exp_factor
 
         err_global_ha_pct = (extrap_global_ha - gt_ha) / gt_ha * 100.0 if not np.isnan(gt_ha) else np.nan
+        err_bias_ha_pct   = (extrap_bias_ha - gt_ha) / gt_ha * 100.0 if not np.isnan(gt_ha) else np.nan
         err_human_ha_pct  = (extrap_human_ha - gt_ha) / gt_ha * 100.0 if not np.isnan(gt_ha) else np.nan
 
         lopo_results.append({
             "test_plot_id": test_pid,
             "calibrated_config": best_cfg,
+            "calibrated_bias_config": best_bias_cfg,
             "train_rmse": train_rmse,
+            "train_abs_bias_pct": train_abs_bias,
             "n_test_trees": len(df_test),
             "n_living_field": n_living,
             "tree_rmse_global": test_metrics_global["rmse"],
             "tree_bias_global_pct": test_metrics_global["bias_pct"],
+            "tree_rmse_bias_cal": test_metrics_bias["rmse"],
+            "tree_bias_bias_cal_pct": test_metrics_bias["bias_pct"],
             "tree_rmse_human": rmse_human,
             "tree_bias_human_pct": bias_human,
             "gt_m3_ha": gt_ha,
             "pred_global_m3_ha": extrap_global_ha,
             "err_global_ha_pct": err_global_ha_pct,
+            "pred_bias_cal_m3_ha": extrap_bias_ha,
+            "err_bias_cal_ha_pct": err_bias_ha_pct,
             "pred_human_m3_ha": extrap_human_ha,
             "err_human_ha_pct": err_human_ha_pct
         })
@@ -120,8 +154,9 @@ def run_sampling_saturation_curve(df_trees: pd.DataFrame, df_field_all: pd.DataF
     """
     Subsample field plots at different sample sizes to determine the point of saturation
     where additional field plots yield diminishing accuracy returns.
+    Uses unique combinations without replacement when C(N, k) <= n_repeats.
     """
-    np.random.seed(random_seed)
+    rng = np.random.default_rng(random_seed)
     all_plots = np.array(sorted(df_trees["plot_id"].unique()))
     saturation_records = []
 
@@ -129,8 +164,15 @@ def run_sampling_saturation_curve(df_trees: pd.DataFrame, df_field_all: pd.DataF
         if k >= len(all_plots):
             continue
 
-        for rep in range(n_repeats):
-            train_plots = np.random.choice(all_plots, size=k, replace=False)
+        all_combos = list(combinations(all_plots, k))
+        if len(all_combos) <= n_repeats:
+            selected_combos = all_combos
+        else:
+            idxs = rng.choice(len(all_combos), size=n_repeats, replace=False)
+            selected_combos = [all_combos[i] for i in idxs]
+
+        for rep, train_tuple in enumerate(selected_combos):
+            train_plots = np.array(train_tuple)
             test_plots  = np.setdiff1d(all_plots, train_plots)
 
             df_train = df_trees[df_trees["plot_id"].isin(train_plots)]
@@ -140,9 +182,11 @@ def run_sampling_saturation_curve(df_trees: pd.DataFrame, df_field_all: pd.DataF
                 continue
 
             best_cfg, _ = find_best_global_config(df_train, cfg_cols)
+            best_bias_cfg, _ = find_best_unbiased_config(df_train, cfg_cols)
 
             # Test plot predictions
             test_plot_errors_global = []
+            test_plot_errors_bias_cal = []
             test_plot_errors_human = []
 
             for pid in test_plots:
@@ -156,11 +200,17 @@ def run_sampling_saturation_curve(df_trees: pd.DataFrame, df_field_all: pd.DataF
                 exp_factor = 10000.0 / area_m2
                 n_living = len(df_field_all[(df_field_all["PAR_CODIGO"] == pid) & df_field_all["has_gt_volume"]])
 
-                # Global prediction
+                # Global prediction (Tree-RMSE calibrated)
                 m_v_g = float(sub_t[best_cfg].mean())
                 pred_g_ha = m_v_g * n_living * exp_factor
                 err_g = abs(pred_g_ha - gt_ha) / gt_ha * 100.0 if not np.isnan(gt_ha) else np.nan
                 test_plot_errors_global.append(err_g)
+
+                # Bias-calibrated prediction (Plot/Bias calibrated)
+                m_v_b = float(sub_t[best_bias_cfg].mean())
+                pred_b_ha = m_v_b * n_living * exp_factor
+                err_b = abs(pred_b_ha - gt_ha) / gt_ha * 100.0 if not np.isnan(gt_ha) else np.nan
+                test_plot_errors_bias_cal.append(err_b)
 
                 # Human prediction
                 h_vols = [row[cfg_cols].iloc[(row[cfg_cols] - row["gt_volume"]).abs().argmin()] for _, row in sub_t.iterrows()]
@@ -173,7 +223,9 @@ def run_sampling_saturation_curve(df_trees: pd.DataFrame, df_field_all: pd.DataF
                 "n_train_plots": k,
                 "repeat_idx": rep,
                 "best_cfg": best_cfg,
+                "best_bias_cfg": best_bias_cfg,
                 "mean_abs_plot_err_global": float(np.mean(test_plot_errors_global)),
+                "mean_abs_plot_err_bias_cal": float(np.mean(test_plot_errors_bias_cal)),
                 "mean_abs_plot_err_human": float(np.mean(test_plot_errors_human))
             })
 

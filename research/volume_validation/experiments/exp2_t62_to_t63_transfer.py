@@ -20,7 +20,7 @@ from src.data_loader import load_inventory_data, load_classified_las
 from src.stem_enhancement import enhance_stem_points, extract_qc_trees
 from src.spatial_matcher import align_and_match_plot
 from src.biometrics import compute_tree_biometrics_grid
-from src.cross_validation import find_best_global_config, evaluate_config_on_subset
+from src.cross_validation import find_best_global_config, find_best_unbiased_config, evaluate_config_on_subset
 
 
 def main():
@@ -93,11 +93,14 @@ def main():
     t62_csv = os.path.join(export_dir, "df_trees_t62_calibration.csv")
     df_trees_t62.to_csv(t62_csv, index=False)
 
-    # 3. Model Calibration (Identify Optimal Global Config on T62)
-    print("\n[3/5] Calibrating volumetric model on T62 reference plots...")
+    # 3. Model Calibration (Identify Optimal Configs on T62: Tree-RMSE vs Volume-Bias)
+    print("\n[3/5] Calibrating volumetric models on T62 reference plots...")
     cfg_cols = [c for c in df_trees_t62.columns if c.startswith(("voxel_", "axis_", "cyl_"))]
     best_cfg_t62, calib_rmse = find_best_global_config(df_trees_t62, cfg_cols)
     calib_metrics = evaluate_config_on_subset(df_trees_t62, best_cfg_t62)
+
+    best_bias_cfg_t62, calib_abs_bias = find_best_unbiased_config(df_trees_t62, cfg_cols)
+    calib_bias_metrics = evaluate_config_on_subset(df_trees_t62, best_bias_cfg_t62)
 
     # Also compute Human-in-the-Loop on T62
     human_vols_t62 = []
@@ -117,9 +120,9 @@ def main():
     human_rmse_t62 = float(np.sqrt(np.mean((h_t62_arr - gt_t62_arr) ** 2)))
     human_bias_t62 = float((np.mean(h_t62_arr) - np.mean(gt_t62_arr)) / np.mean(gt_t62_arr) * 100.0)
 
-    print(f"  Best Global Config: {best_cfg_t62}")
-    print(f"  Mode 1 (Global): RMSE = {calib_metrics['rmse']:.4f} m³ | Bias = {calib_metrics['bias_pct']:+.1f}%")
-    print(f"  Mode 2 (Human) : RMSE = {human_rmse_t62:.4f} m³ | Bias = {human_bias_t62:+.1f}%")
+    print(f"  Mode 1A (Tree-RMSE Calibrated): {best_cfg_t62} | RMSE = {calib_metrics['rmse']:.4f} m³ | Bias = {calib_metrics['bias_pct']:+.1f}%")
+    print(f"  Mode 1B (Plot-Bias Calibrated): {best_bias_cfg_t62} | RMSE = {calib_bias_metrics['rmse']:.4f} m³ | Bias = {calib_bias_metrics['bias_pct']:+.1f}%")
+    print(f"  Mode 2  (Human in the Loop)   : Oracle     | RMSE = {human_rmse_t62:.4f} m³ | Bias = {human_bias_t62:+.1f}%")
 
     # 4. Process Target Cloud: Talhão 63 (Unvisited Clonal Block)
     print("\n[4/5] Applying calibrated models to unvisited block Talhão 63 (5cm)...")
@@ -145,7 +148,8 @@ def main():
             "tid": t["tid"],
             "height": bio["height_m"],
             "dbh": bio["dbh_cm"],
-            "vol_global_calibrated": bio["configs"].get(best_cfg_t62, np.nan)
+            "vol_global_calibrated": bio["configs"].get(best_cfg_t62, np.nan),
+            "vol_bias_calibrated": bio["configs"].get(best_bias_cfg_t62, np.nan),
         }
         t63_tree_records.append(rec)
 
@@ -163,14 +167,18 @@ def main():
     t63_area_ha = cfg["dataset"]["t63_area_ha"] # 15.04 ha
     total_area_ha = cfg["dataset"]["total_area_ha"] # 41.00 ha
 
-    # Approach A: Density expansion using mean tree volume
+    # Density expansion using mean tree volume
     mean_tree_v_t62_global = float(df_trees_t62[best_cfg_t62].mean())
-    mean_tree_v_t62_human = float(np.mean(human_vols_t62))
-    mean_tree_v_t63_pred = float(df_trees_t63["vol_global_calibrated"].dropna().mean())
+    mean_tree_v_t62_bias   = float(df_trees_t62[best_bias_cfg_t62].mean())
+    mean_tree_v_t62_human  = float(np.mean(human_vols_t62))
+    mean_tree_v_t63_pred_rmse = float(df_trees_t63["vol_global_calibrated"].dropna().mean())
+    mean_tree_v_t63_pred_bias = float(df_trees_t63["vol_bias_calibrated"].dropna().mean())
 
     extrap_t62_global_ha = mean_tree_v_t62_global * official_trees_ha
+    extrap_t62_bias_ha   = mean_tree_v_t62_bias * official_trees_ha
     extrap_t62_human_ha  = mean_tree_v_t62_human * official_trees_ha
-    extrap_t63_transferred_ha = mean_tree_v_t63_pred * official_trees_ha
+    extrap_t63_rmse_ha   = mean_tree_v_t63_pred_rmse * official_trees_ha
+    extrap_t63_bias_ha   = mean_tree_v_t63_pred_bias * official_trees_ha
 
     # Total timber m3
     tot_gt_t62 = official_gt_m3_ha * t62_area_ha
@@ -178,19 +186,31 @@ def main():
     tot_gt_all = float(t_info["VTCC (m³)"]) # 8252.95 m3
 
     tot_pred_t62_global = extrap_t62_global_ha * t62_area_ha
+    tot_pred_t62_bias   = extrap_t62_bias_ha * t62_area_ha
     tot_pred_t62_human  = extrap_t62_human_ha * t62_area_ha
-    tot_pred_t63_transferred = extrap_t63_transferred_ha * t63_area_ha
+    tot_pred_t63_rmse   = extrap_t63_rmse_ha * t63_area_ha
+    tot_pred_t63_bias   = extrap_t63_bias_ha * t63_area_ha
 
     extrap_results = [
         {
             "stand": "Talhão 62 (Calibration Base)",
             "area_ha": t62_area_ha,
-            "mode": "Mode 1: Global Best",
+            "mode": f"Mode 1A: Tree-RMSE Cal ({best_cfg_t62})",
             "gt_m3_ha": official_gt_m3_ha,
             "pred_m3_ha": extrap_t62_global_ha,
             "err_pct": (extrap_t62_global_ha - official_gt_m3_ha) / official_gt_m3_ha * 100.0,
             "gt_total_m3": tot_gt_t62,
             "pred_total_m3": tot_pred_t62_global
+        },
+        {
+            "stand": "Talhão 62 (Calibration Base)",
+            "area_ha": t62_area_ha,
+            "mode": f"Mode 1B: Plot-Bias Cal ({best_bias_cfg_t62})",
+            "gt_m3_ha": official_gt_m3_ha,
+            "pred_m3_ha": extrap_t62_bias_ha,
+            "err_pct": (extrap_t62_bias_ha - official_gt_m3_ha) / official_gt_m3_ha * 100.0,
+            "gt_total_m3": tot_gt_t62,
+            "pred_total_m3": tot_pred_t62_bias
         },
         {
             "stand": "Talhão 62 (Calibration Base)",
@@ -205,12 +225,22 @@ def main():
         {
             "stand": "Talhão 63 (Transferred Blind Block)",
             "area_ha": t63_area_ha,
-            "mode": f"Transferred Model ({best_cfg_t62})",
+            "mode": f"Transferred Tree-RMSE Model ({best_cfg_t62})",
             "gt_m3_ha": official_gt_m3_ha,
-            "pred_m3_ha": extrap_t63_transferred_ha,
-            "err_pct": (extrap_t63_transferred_ha - official_gt_m3_ha) / official_gt_m3_ha * 100.0,
+            "pred_m3_ha": extrap_t63_rmse_ha,
+            "err_pct": (extrap_t63_rmse_ha - official_gt_m3_ha) / official_gt_m3_ha * 100.0,
             "gt_total_m3": tot_gt_t63,
-            "pred_total_m3": tot_pred_t63_transferred
+            "pred_total_m3": tot_pred_t63_rmse
+        },
+        {
+            "stand": "Talhão 63 (Transferred Blind Block)",
+            "area_ha": t63_area_ha,
+            "mode": f"Transferred Plot-Bias Model ({best_bias_cfg_t62})",
+            "gt_m3_ha": official_gt_m3_ha,
+            "pred_m3_ha": extrap_t63_bias_ha,
+            "err_pct": (extrap_t63_bias_ha - official_gt_m3_ha) / official_gt_m3_ha * 100.0,
+            "gt_total_m3": tot_gt_t63,
+            "pred_total_m3": tot_pred_t63_bias
         }
     ]
 
@@ -230,11 +260,15 @@ def main():
         "experiment": "Exp2_T62_to_T63_Transferability",
         "resolution": "5cm",
         "best_calibrated_config": best_cfg_t62,
+        "best_bias_calibrated_config": best_bias_cfg_t62,
         "calibration_trees_count": len(df_trees_t62),
         "calibration_rmse": calib_metrics["rmse"],
+        "calibration_bias_rmse": calib_bias_metrics["rmse"],
         "t63_qc_trees_count": len(qc_trees_t63),
         "mean_tree_volume_t62_m3": mean_tree_v_t62_global,
-        "mean_tree_volume_t63_m3": mean_tree_v_t63_pred,
+        "mean_tree_volume_t62_bias_cal_m3": mean_tree_v_t62_bias,
+        "mean_tree_volume_t63_m3": mean_tree_v_t63_pred_rmse,
+        "mean_tree_volume_t63_bias_cal_m3": mean_tree_v_t63_pred_bias,
         "extrapolation_results": df_extrap_out.to_dict(orient="records")
     }
     meta_json = os.path.join(export_dir, "exp2_summary.json")

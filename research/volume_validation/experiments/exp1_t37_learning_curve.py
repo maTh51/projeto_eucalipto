@@ -107,11 +107,12 @@ def main():
     print("\n" + "=" * 65)
     print("LOPO SUMMARY (100% Blind Predictions on Unseen Plots):")
     print("=" * 65)
-    mean_abs_err_global = df_lopo["err_global_ha_pct"].abs().mean()
-    mean_abs_err_human = df_lopo["err_human_ha_pct"].abs().mean()
-    print(f"  Mode 1: Global Best Config Mean Abs Error : {mean_abs_err_global:.2f}%")
-    print(f"  Mode 2: Human in the Loop Mean Abs Error  : {mean_abs_err_human:.2f}%")
-    print(f"  Expert Intervention Accuracy Gain         : {mean_abs_err_global - mean_abs_err_human:.2f} percentage points")
+    mean_abs_err_global = float(df_lopo["err_global_ha_pct"].abs().mean())
+    mean_abs_err_bias_cal = float(df_lopo["err_bias_cal_ha_pct"].abs().mean())
+    mean_abs_err_human = float(df_lopo["err_human_ha_pct"].abs().mean())
+    print(f"  Mode 1A (Tree-RMSE Calibrated) Mean Abs Error : {mean_abs_err_global:.2f}% (Bias: {df_lopo['err_global_ha_pct'].mean():+.2f}%)")
+    print(f"  Mode 1B (Plot-Bias Calibrated) Mean Abs Error : {mean_abs_err_bias_cal:.2f}% (Bias: {df_lopo['err_bias_cal_ha_pct'].mean():+.2f}%)")
+    print(f"  Mode 2  (Human in the Loop)    Mean Abs Error : {mean_abs_err_human:.2f}% (Bias: {df_lopo['err_human_ha_pct'].mean():+.2f}%)")
     print(f"  Results saved to: {lopo_csv}")
 
     # 4. Sampling Saturation Curve (Diminishing Returns Analysis)
@@ -131,6 +132,8 @@ def main():
     sat_summary = df_saturation.groupby("n_train_plots").agg(
         global_err_mean=("mean_abs_plot_err_global", "mean"),
         global_err_std=("mean_abs_plot_err_global", "std"),
+        bias_cal_err_mean=("mean_abs_plot_err_bias_cal", "mean"),
+        bias_cal_err_std=("mean_abs_plot_err_bias_cal", "std"),
         human_err_mean=("mean_abs_plot_err_human", "mean"),
         human_err_std=("mean_abs_plot_err_human", "std"),
     ).reset_index()
@@ -141,7 +144,12 @@ def main():
     print("SAMPLING SATURATION CURVE (N Train Plots vs Held-Out Error %):")
     print("=" * 65)
     for _, r in sat_summary.iterrows():
-        print(f"  N = {int(r['n_train_plots']):2d} train plots -> Blind Plot Error: Global = {r['global_err_mean']:.1f}% (±{r['global_err_std']:.1f}%) | Human = {r['human_err_mean']:.1f}% (±{r['human_err_std']:.1f}%)")
+        print(
+            f"  N = {int(r['n_train_plots']):2d} train plots -> "
+            f"Tree-RMSE Cal: {r['global_err_mean']:.1f}% (±{r['global_err_std']:.1f}%) | "
+            f"Bias Cal: {r['bias_cal_err_mean']:.1f}% (±{r['bias_cal_err_std']:.1f}%) | "
+            f"Human: {r['human_err_mean']:.1f}% (±{r['human_err_std']:.1f}%)"
+        )
 
     # 5. Export Master Summary JSON
     print("\n[5/5] Exporting master experiment summary JSON...")
@@ -151,6 +159,7 @@ def main():
         "resolution": "10cm",
         "total_trees_matched": len(df_trees),
         "lopo_mean_abs_err_global_pct": mean_abs_err_global,
+        "lopo_mean_abs_err_bias_cal_pct": mean_abs_err_bias_cal,
         "lopo_mean_abs_err_human_pct": mean_abs_err_human,
         "saturation_summary": sat_summary.to_dict(orient="records"),
         "lopo_details": df_lopo.to_dict(orient="records")

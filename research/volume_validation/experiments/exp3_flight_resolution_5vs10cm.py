@@ -20,7 +20,12 @@ from src.data_loader import load_inventory_data, load_classified_las
 from src.stem_enhancement import enhance_stem_points, extract_qc_trees
 from src.spatial_matcher import align_and_match_plot
 from src.biometrics import compute_tree_biometrics_grid
-from src.cross_validation import find_best_global_config, evaluate_config_on_subset
+from src.cross_validation import (
+    find_best_global_config,
+    find_best_unbiased_config,
+    evaluate_config_on_subset,
+    run_leave_one_plot_out,
+)
 
 
 def process_resolution_dataset(res_name: str, cloud_dir: str, cfg: dict, df_field_all: pd.DataFrame, df_parc: pd.DataFrame):
@@ -32,6 +37,7 @@ def process_resolution_dataset(res_name: str, cloud_dir: str, cfg: dict, df_fiel
 
     tree_records = []
     plot_results = []
+    densities = []
 
     for pid in sorted(plots):
         cpath = os.path.join(cloud_dir, pattern.format(plot_id=pid))
@@ -39,6 +45,10 @@ def process_resolution_dataset(res_name: str, cloud_dir: str, cfg: dict, df_fiel
             continue
 
         pts, inst, sem = load_classified_las(cpath)
+        bbox_area = (pts[:, 0].max() - pts[:, 0].min()) * (pts[:, 1].max() - pts[:, 1].min())
+        if bbox_area > 0:
+            densities.append(len(pts) / bbox_area)
+
         inst_enh, n_reassigned = enhance_stem_points(pts, inst, sem, **enh_params)
         qc_trees = extract_qc_trees(pts, inst_enh, sem, plot_id=pid, **qc_params)
 
@@ -70,6 +80,12 @@ def process_resolution_dataset(res_name: str, cloud_dir: str, cfg: dict, df_fiel
     best_cfg, rmse = find_best_global_config(df_trees, cfg_cols)
     metrics_global = evaluate_config_on_subset(df_trees, best_cfg)
 
+    best_bias_cfg, _ = find_best_unbiased_config(df_trees, cfg_cols)
+    metrics_bias = evaluate_config_on_subset(df_trees, best_bias_cfg)
+
+    # 4-fold Leave-One-Plot-Out (out-of-sample plot evaluation)
+    df_lopo = run_leave_one_plot_out(df_trees, df_field_all, df_parc, cfg_cols)
+
     # Human in the loop
     human_vols = []
     for _, row in df_trees.iterrows():
@@ -100,11 +116,17 @@ def process_resolution_dataset(res_name: str, cloud_dir: str, cfg: dict, df_fiel
         n_living = len(df_field_all[(df_field_all["PAR_CODIGO"] == pid) & df_field_all["has_gt_volume"]])
 
         m_v_g = float(sub_t[best_cfg].mean())
+        m_v_b = float(sub_t[best_bias_cfg].mean())
         h_sub = [row[cfg_cols].iloc[(row[cfg_cols] - row["gt_volume"]).abs().argmin()] for _, row in sub_t.iterrows()]
         m_v_h = float(np.mean(h_sub))
 
         pred_g_ha = m_v_g * n_living * exp_factor
+        pred_b_ha = m_v_b * n_living * exp_factor
         pred_h_ha = m_v_h * n_living * exp_factor
+
+        lopo_row = df_lopo[df_lopo["test_plot_id"] == pid]
+        lopo_err_g = float(lopo_row["err_global_ha_pct"].iloc[0]) if len(lopo_row) > 0 else np.nan
+        lopo_err_b = float(lopo_row["err_bias_cal_ha_pct"].iloc[0]) if len(lopo_row) > 0 else np.nan
 
         plot_results.append({
             "resolution": res_name,
@@ -113,20 +135,30 @@ def process_resolution_dataset(res_name: str, cloud_dir: str, cfg: dict, df_fiel
             "gt_m3_ha": gt_ha,
             "pred_global_m3_ha": pred_g_ha,
             "err_global_ha_pct": (pred_g_ha - gt_ha) / gt_ha * 100.0 if not np.isnan(gt_ha) else np.nan,
+            "lopo_err_global_ha_pct": lopo_err_g,
+            "pred_bias_cal_m3_ha": pred_b_ha,
+            "err_bias_cal_ha_pct": (pred_b_ha - gt_ha) / gt_ha * 100.0 if not np.isnan(gt_ha) else np.nan,
+            "lopo_err_bias_cal_ha_pct": lopo_err_b,
             "pred_human_m3_ha": pred_h_ha,
             "err_human_ha_pct": (pred_h_ha - gt_ha) / gt_ha * 100.0 if not np.isnan(gt_ha) else np.nan,
         })
 
+    mean_dens = float(np.mean(densities)) if densities else np.nan
     return {
         "res_name": res_name,
+        "mean_density_pts_m2": mean_dens,
         "n_trees": len(df_trees),
         "best_cfg": best_cfg,
+        "best_bias_cfg": best_bias_cfg,
         "tree_rmse_global": metrics_global["rmse"],
         "tree_bias_global_pct": metrics_global["bias_pct"],
+        "tree_rmse_bias_cal": metrics_bias["rmse"],
+        "tree_bias_bias_cal_pct": metrics_bias["bias_pct"],
         "tree_rmse_human": rmse_h,
         "tree_bias_human_pct": bias_h,
         "df_trees": df_trees,
-        "df_plots": pd.DataFrame(plot_results)
+        "df_plots": pd.DataFrame(plot_results),
+        "df_lopo": df_lopo,
     }
 
 
@@ -174,22 +206,34 @@ def main():
     summary_table = pd.DataFrame([
         {
             "Resolution": "5 cm",
-            "Approx_Point_Density": "~400 pts/m²",
+            "Approx_Point_Density": f"{res_5cm['mean_density_pts_m2']:.0f} pts/m²",
             "Matched_Trees": res_5cm["n_trees"],
             "Optimal_Model": res_5cm["best_cfg"],
+            "Optimal_Bias_Model": res_5cm["best_bias_cfg"],
             "Tree_Volume_RMSE_m3": round(res_5cm["tree_rmse_global"], 4),
             "Tree_Volume_Bias_pct": round(res_5cm["tree_bias_global_pct"], 1),
+            "Tree_Volume_RMSE_BiasCal_m3": round(res_5cm["tree_rmse_bias_cal"], 4),
+            "Tree_Volume_Bias_BiasCal_pct": round(res_5cm["tree_bias_bias_cal_pct"], 1),
             "Mean_Plot_Error_Global_pct": round(float(res_5cm["df_plots"]["err_global_ha_pct"].abs().mean()), 1),
+            "LOPO_Plot_Error_Global_pct": round(float(res_5cm["df_plots"]["lopo_err_global_ha_pct"].abs().mean()), 1),
+            "Mean_Plot_Error_BiasCal_pct": round(float(res_5cm["df_plots"]["err_bias_cal_ha_pct"].abs().mean()), 1),
+            "LOPO_Plot_Error_BiasCal_pct": round(float(res_5cm["df_plots"]["lopo_err_bias_cal_ha_pct"].abs().mean()), 1),
             "Mean_Plot_Error_Human_pct": round(float(res_5cm["df_plots"]["err_human_ha_pct"].abs().mean()), 1),
         },
         {
             "Resolution": "10 cm",
-            "Approx_Point_Density": "~150 pts/m²",
+            "Approx_Point_Density": f"{res_10cm['mean_density_pts_m2']:.0f} pts/m²",
             "Matched_Trees": res_10cm["n_trees"],
             "Optimal_Model": res_10cm["best_cfg"],
+            "Optimal_Bias_Model": res_10cm["best_bias_cfg"],
             "Tree_Volume_RMSE_m3": round(res_10cm["tree_rmse_global"], 4),
             "Tree_Volume_Bias_pct": round(res_10cm["tree_bias_global_pct"], 1),
+            "Tree_Volume_RMSE_BiasCal_m3": round(res_10cm["tree_rmse_bias_cal"], 4),
+            "Tree_Volume_Bias_BiasCal_pct": round(res_10cm["tree_bias_bias_cal_pct"], 1),
             "Mean_Plot_Error_Global_pct": round(float(res_10cm["df_plots"]["err_global_ha_pct"].abs().mean()), 1),
+            "LOPO_Plot_Error_Global_pct": round(float(res_10cm["df_plots"]["lopo_err_global_ha_pct"].abs().mean()), 1),
+            "Mean_Plot_Error_BiasCal_pct": round(float(res_10cm["df_plots"]["err_bias_cal_ha_pct"].abs().mean()), 1),
+            "LOPO_Plot_Error_BiasCal_pct": round(float(res_10cm["df_plots"]["lopo_err_bias_cal_ha_pct"].abs().mean()), 1),
             "Mean_Plot_Error_Human_pct": round(float(res_10cm["df_plots"]["err_human_ha_pct"].abs().mean()), 1),
         }
     ])

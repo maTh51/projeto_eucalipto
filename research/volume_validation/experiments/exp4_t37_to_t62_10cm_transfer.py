@@ -1,13 +1,13 @@
 """
 Experiment 4: Cross-Stand Transferability Benchmark at Identical 10cm Resolution.
-Directly addresses the critique of cross-density bias:
-Compares the old biased transfer (10cm -> 5cm, which had -62.3% error)
-against transferring between stands at the EXACT same 10cm resolution (T37 10cm <-> T62 10cm).
+Compares cross-resolution transfer (10cm <-> 5cm) against matched-resolution transfer
+(T37 10cm <-> T62 10cm) under both Tree-RMSE calibration and Volume-Bias calibration.
 """
 
 import json
 import os
 import sys
+import yaml
 import numpy as np
 import pandas as pd
 
@@ -20,7 +20,11 @@ os.makedirs(EXP4_DIR, exist_ok=True)
 sys.path.append(BASE_DIR)
 sys.path.append(RESEARCH_DIR)
 
-from src.cross_validation import find_best_global_config, evaluate_config_on_subset
+from src.cross_validation import (
+    find_best_global_config,
+    find_best_unbiased_config,
+    evaluate_config_on_subset,
+)
 from src.data_loader import load_inventory_data
 
 
@@ -29,7 +33,28 @@ def main():
     print("STARTING EXPERIMENT 4: CROSS-STAND TRANSFER AT IDENTICAL 10CM RESOLUTION")
     print("=" * 80)
 
-    # 1. Load Data
+    # 1. Load Official Inventory Metadata (No Hardcoded Stand Constants)
+    cfg_t37_path = os.path.join(RESEARCH_DIR, "configs/config_t37_cv.yaml")
+    with open(cfg_t37_path, "r") as f:
+        cfg_t37 = yaml.safe_load(f)
+    excel_path = cfg_t37["dataset"]["excel_path"]
+
+    _, _, df_tal_37 = load_inventory_data(excel_path, 37)
+    _, _, df_tal_62 = load_inventory_data(excel_path, "062-063")
+
+    t37_info = df_tal_37.iloc[0]
+    t62_info = df_tal_62.iloc[0]
+
+    t37_gt_ha = float(t37_info["VTCC (m³/ha)"])
+    trees_ha_t37 = float(t37_info["Árvores (n/ha)"])
+
+    t62_gt_ha = float(t62_info["VTCC (m³/ha)"])
+    trees_ha_t62 = float(t62_info["Árvores (n/ha)"])
+
+    print(f"Official Inventory T37: GT = {t37_gt_ha:.2f} m³/ha | Density = {trees_ha_t37:.2f} trees/ha")
+    print(f"Official Inventory T62: GT = {t62_gt_ha:.2f} m³/ha | Density = {trees_ha_t62:.2f} trees/ha")
+
+    # 2. Load Matched Tree Biometrics Datasets
     t37_csv = os.path.join(RESULTS_DIR, "exp1_t37/df_trees_t37_matched.csv")
     t62_csv = os.path.join(RESULTS_DIR, "exp3_resolution_5vs10cm/trees_resolution_comparison.csv")
 
@@ -38,140 +63,110 @@ def main():
     df_t62_10 = df_res[df_res["resolution"].str.contains("10cm")].reset_index(drop=True)
     df_t62_5 = df_res[df_res["resolution"].str.contains("5cm")].reset_index(drop=True)
 
-    print(f"Loaded Talhão 37 (10cm): {len(df_t37)} trees across 11 plots.")
+    print(f"\nLoaded Talhão 37 (10cm): {len(df_t37)} trees across 11 plots.")
     print(f"Loaded Talhão 62 (10cm): {len(df_t62_10)} trees across 4 plots.")
     print(f"Loaded Talhão 62 (5cm):  {len(df_t62_5)} trees across 4 plots.")
 
     cfg_cols = [c for c in df_t37.columns if c.startswith(("voxel_", "axis_", "cyl_"))]
 
-    # Ground truth stand metadata
-    # Talhão 37: 26.46 ha, GT 191.14 m3/ha, 5057.67 m3 total
-    # Talhão 62: 25.96 ha, GT 201.29 m3/ha, 5225.49 m3 total
-    t37_area = 26.46
-    t37_gt_ha = 191.14
-    t37_gt_tot = 5057.67
-
-    t62_area = 25.96
-    t62_gt_ha = 201.29
-    t62_gt_tot = 5225.49
-
-    # Inventory living tree densities
-    # T37: 11 plots of 400m2 -> mean living trees = 42.7 trees/plot -> 1068.2 trees/ha
-    # T62: 4 plots of 500m2 -> mean living trees = 45.5 trees/plot -> 910.0 trees/ha
-    trees_ha_t37 = 1068.18
-    trees_ha_t62 = 910.00
-
     # -------------------------------------------------------------------------
-    # Calibration on T37 (10cm)
+    # Side-by-Side Calibration on T37 (10cm), T62 (10cm), and T62 (5cm)
     # -------------------------------------------------------------------------
-    best_cfg_t37, rmse_t37 = find_best_global_config(df_t37, cfg_cols)
-    print(f"\n[Calibrated on T37 (10cm)] Best Model: {best_cfg_t37} (RMSE={rmse_t37:.4f} m³)")
+    rmse_cfg_t37, rmse_val_t37 = find_best_global_config(df_t37, cfg_cols)
+    bias_cfg_t37, bias_val_t37 = find_best_unbiased_config(df_t37, cfg_cols)
 
-    # 1. Old transfer: T37 (10cm) -> T62 (5cm) [Mismatched resolution]
-    m_vol_t62_5_old = df_t62_5[best_cfg_t37].mean()
-    # In 5cm, voxel_vs0.08 counts too few voxels because voxel size was calibrated on sparse points
-    pred_ha_old = m_vol_t62_5_old * trees_ha_t62
-    pred_tot_old = pred_ha_old * t62_area
-    err_pct_old = (pred_ha_old - t62_gt_ha) / t62_gt_ha * 100.0
+    rmse_cfg_t62_10, rmse_val_t62_10 = find_best_global_config(df_t62_10, cfg_cols)
+    bias_cfg_t62_10, bias_val_t62_10 = find_best_unbiased_config(df_t62_10, cfg_cols)
 
-    # 2. New transfer: T37 (10cm) -> T62 (10cm) [Matched 10cm resolution]
-    m_vol_t62_10_new = df_t62_10[best_cfg_t37].mean()
-    pred_ha_new = m_vol_t62_10_new * trees_ha_t62
-    pred_tot_new = pred_ha_new * t62_area
-    err_pct_new = (pred_ha_new - t62_gt_ha) / t62_gt_ha * 100.0
+    rmse_cfg_t62_5, rmse_val_t62_5 = find_best_global_config(df_t62_5, cfg_cols)
+    bias_cfg_t62_5, bias_val_t62_5 = find_best_unbiased_config(df_t62_5, cfg_cols)
 
-    print("\n--- TRANSFER RESULTS: T37 (10cm) -> T62 ---")
-    print(f"  Old Transfer (10cm -> 5cm):  Pred: {pred_ha_old:.1f} m³/ha | GT: {t62_gt_ha:.1f} m³/ha | Error: {err_pct_old:+.1f}%")
-    print(f"  New Transfer (10cm -> 10cm): Pred: {pred_ha_new:.1f} m³/ha | GT: {t62_gt_ha:.1f} m³/ha | Error: {err_pct_new:+.1f}%")
+    print("\n--- CALIBRATION SELECTION BY STAND & CRITERION ---")
+    print(f"  T37 (10cm): Tree-RMSE Cal = {rmse_cfg_t37} (RMSE={rmse_val_t37:.4f} m³) | Plot-Bias Cal = {bias_cfg_t37} (|Bias|={bias_val_t37:.1f}%)")
+    print(f"  T62 (10cm): Tree-RMSE Cal = {rmse_cfg_t62_10} (RMSE={rmse_val_t62_10:.4f} m³) | Plot-Bias Cal = {bias_cfg_t62_10} (|Bias|={bias_val_t62_10:.1f}%)")
+    print(f"  T62 (5cm) : Tree-RMSE Cal = {rmse_cfg_t62_5} (RMSE={rmse_val_t62_5:.4f} m³) | Plot-Bias Cal = {bias_cfg_t62_5} (|Bias|={bias_val_t62_5:.1f}%)")
 
-    # -------------------------------------------------------------------------
-    # Calibration on T62 (10cm)
-    # -------------------------------------------------------------------------
-    best_cfg_t62_10, rmse_t62 = find_best_global_config(df_t62_10, cfg_cols)
-    print(f"\n[Calibrated on T62 (10cm)] Best Model: {best_cfg_t62_10} (RMSE={rmse_t62:.4f} m³)")
-    print(f"  --> Note: Both stands independently chose '{best_cfg_t62_10}' as optimal at 10cm!")
+    def eval_transfer(df_target, cfg_rmse, cfg_bias, trees_ha_target, gt_ha_target, exp_type, direction, target_res):
+        # Tree-RMSE calibrated model
+        m_vol_rmse = float(df_target[cfg_rmse].mean())
+        pred_ha_rmse = m_vol_rmse * trees_ha_target
+        err_rmse_pct = (pred_ha_rmse - gt_ha_target) / gt_ha_target * 100.0
+        ev_rmse = evaluate_config_on_subset(df_target, cfg_rmse)
 
-    # Transfer: T62 (10cm) -> T37 (10cm)
-    m_vol_t37_from_62 = df_t37[best_cfg_t62_10].mean()
-    pred_ha_37 = m_vol_t37_from_62 * trees_ha_t37
-    pred_tot_37 = pred_ha_37 * t37_area
-    err_pct_37 = (pred_ha_37 - t37_gt_ha) / t37_gt_ha * 100.0
+        # Plot-Bias calibrated model
+        m_vol_bias = float(df_target[cfg_bias].mean())
+        pred_ha_bias = m_vol_bias * trees_ha_target
+        err_bias_pct = (pred_ha_bias - gt_ha_target) / gt_ha_target * 100.0
+        ev_bias = evaluate_config_on_subset(df_target, cfg_bias)
 
-    # Old transfer: T62 (5cm) -> T37 (10cm)
-    best_cfg_t62_5, _ = find_best_global_config(df_t62_5, cfg_cols) # voxel_vs0.07
-    m_vol_t37_from_62_5 = df_t37[best_cfg_t62_5].mean()
-    pred_ha_37_old = m_vol_t37_from_62_5 * trees_ha_t37
-    pred_tot_37_old = pred_ha_37_old * t37_area
-    err_pct_37_old = (pred_ha_37_old - t37_gt_ha) / t37_gt_ha * 100.0
-
-    print("\n--- TRANSFER RESULTS: T62 -> T37 (10cm) ---")
-    print(f"  Old Transfer (5cm -> 10cm):  Pred: {pred_ha_37_old:.1f} m³/ha | GT: {t37_gt_ha:.1f} m³/ha | Error: {err_pct_37_old:+.1f}%")
-    print(f"  New Transfer (10cm -> 10cm): Pred: {pred_ha_37:.1f} m³/ha | GT: {t37_gt_ha:.1f} m³/ha | Error: {err_pct_37:+.1f}%")
-
-    # Tree-level metrics
-    eval_t62_from_t37 = evaluate_config_on_subset(df_t62_10, best_cfg_t37)
-    eval_t37_from_t62 = evaluate_config_on_subset(df_t37, best_cfg_t62_10)
-
-    # Comparison summary table
-    summary_rows = [
-        {
-            "Experiment": "Mismatched Resolution (Old Benchmark)",
-            "Transfer Direction": "T37 (10cm) -> T62 (5cm)",
-            "Calibrated Model": best_cfg_t37,
-            "Target Resolution": "5cm",
-            "Stand Pred (m³/ha)": round(pred_ha_old, 1),
-            "Ground Truth (m³/ha)": t62_gt_ha,
-            "Stand Relative Error (%)": round(err_pct_old, 1),
-            "Tree Volume RMSE (m³)": round(evaluate_config_on_subset(df_t62_5, best_cfg_t37)["rmse"], 4),
-            "Scientific Diagnosis": "Severely biased (-62.3%) due to point density mismatch (150 vs 400 pts/m²)"
-        },
-        {
-            "Experiment": "Matched 10cm Resolution (New Validation)",
-            "Transfer Direction": "T37 (10cm) -> T62 (10cm)",
-            "Calibrated Model": best_cfg_t37,
-            "Target Resolution": "10cm",
-            "Stand Pred (m³/ha)": round(pred_ha_new, 1),
-            "Ground Truth (m³/ha)": t62_gt_ha,
-            "Stand Relative Error (%)": round(err_pct_new, 1),
-            "Tree Volume RMSE (m³)": round(eval_t62_from_t37["rmse"], 4),
-            "Scientific Diagnosis": "Consistent & unbiased (-0.5%) when point cloud resolution is matched"
-        },
-        {
-            "Experiment": "Mismatched Resolution (Old Benchmark)",
-            "Transfer Direction": "T62 (5cm) -> T37 (10cm)",
-            "Calibrated Model": best_cfg_t62_5,
-            "Target Resolution": "10cm",
-            "Stand Pred (m³/ha)": round(pred_ha_37_old, 1),
-            "Ground Truth (m³/ha)": t37_gt_ha,
-            "Stand Relative Error (%)": round(err_pct_37_old, 1),
-            "Tree Volume RMSE (m³)": round(evaluate_config_on_subset(df_t37, best_cfg_t62_5)["rmse"], 4),
-            "Scientific Diagnosis": "Biased (+21.9% in old paper) due to applying 5cm calibration to 10cm data"
-        },
-        {
-            "Experiment": "Matched 10cm Resolution (New Validation)",
-            "Transfer Direction": "T62 (10cm) -> T37 (10cm)",
-            "Calibrated Model": best_cfg_t62_10,
-            "Target Resolution": "10cm",
-            "Stand Pred (m³/ha)": round(pred_ha_37, 1),
-            "Ground Truth (m³/ha)": t37_gt_ha,
-            "Stand Relative Error (%)": round(err_pct_37, 1),
-            "Tree Volume RMSE (m³)": round(eval_t37_from_t62["rmse"], 4),
-            "Scientific Diagnosis": "Consistent (-25.9% stand error driven by clonal allometry, not resolution artifact)"
+        return {
+            "Experiment": exp_type,
+            "Transfer Direction": direction,
+            "Target Resolution": target_res,
+            "Calibrated Model (Tree-RMSE)": cfg_rmse,
+            "Stand Pred Tree-RMSE (m³/ha)": round(pred_ha_rmse, 1),
+            "Stand Error Tree-RMSE (%)": round(err_rmse_pct, 1),
+            "Tree Volume RMSE (m³)": round(ev_rmse["rmse"], 4),
+            "Calibrated Model (Plot-Bias)": cfg_bias,
+            "Stand Pred Plot-Bias (m³/ha)": round(pred_ha_bias, 1),
+            "Stand Error Plot-Bias (%)": round(err_bias_pct, 1),
+            "Tree Volume RMSE Plot-Bias (m³)": round(ev_bias["rmse"], 4),
+            "Ground Truth (m³/ha)": gt_ha_target,
+            # Keep backward-compatible keys for downstream plots
+            "Calibrated Model": cfg_rmse,
+            "Stand Pred (m³/ha)": round(pred_ha_rmse, 1),
+            "Stand Relative Error (%)": round(err_rmse_pct, 1),
         }
+
+    summary_rows = [
+        eval_transfer(
+            df_t62_5, rmse_cfg_t37, bias_cfg_t37, trees_ha_t62, t62_gt_ha,
+            "Mismatched Resolution (10cm -> 5cm)", "T37 (10cm) -> T62 (5cm)", "5cm"
+        ),
+        eval_transfer(
+            df_t62_10, rmse_cfg_t37, bias_cfg_t37, trees_ha_t62, t62_gt_ha,
+            "Matched 10cm Resolution (10cm -> 10cm)", "T37 (10cm) -> T62 (10cm)", "10cm"
+        ),
+        eval_transfer(
+            df_t37, rmse_cfg_t62_5, bias_cfg_t62_5, trees_ha_t37, t37_gt_ha,
+            "Mismatched Resolution (5cm -> 10cm)", "T62 (5cm) -> T37 (10cm)", "10cm"
+        ),
+        eval_transfer(
+            df_t37, rmse_cfg_t62_10, bias_cfg_t62_10, trees_ha_t37, t37_gt_ha,
+            "Matched 10cm Resolution (10cm -> 10cm)", "T62 (10cm) -> T37 (10cm)", "10cm"
+        ),
     ]
 
     df_summary = pd.DataFrame(summary_rows)
     csv_path = os.path.join(EXP4_DIR, "cross_stand_resolution_matching_summary.csv")
     df_summary.to_csv(csv_path, index=False)
+
+    print("\n" + "=" * 95)
+    print("CROSS-STAND TRANSFER SUMMARY (SIDE-BY-SIDE: TREE-RMSE vs PLOT-BIAS CALIBRATION):")
+    print("=" * 95)
+    cols_print = [
+        "Transfer Direction",
+        "Ground Truth (m³/ha)",
+        "Calibrated Model (Tree-RMSE)",
+        "Stand Pred Tree-RMSE (m³/ha)",
+        "Stand Error Tree-RMSE (%)",
+        "Calibrated Model (Plot-Bias)",
+        "Stand Pred Plot-Bias (m³/ha)",
+        "Stand Error Plot-Bias (%)",
+    ]
+    print(df_summary[cols_print].to_string(index=False))
     print(f"\nSaved summary table to: {csv_path}")
 
-    # JSON export
     meta = {
         "experiment": "Exp4_Cross_Stand_Matched_Resolution",
         "description": "Validation of stand-to-stand transfer when matching 10cm LiDAR resolution",
-        "best_model_t37_10cm": best_cfg_t37,
-        "best_model_t62_10cm": best_cfg_t62_10,
-        "summary": summary_rows
+        "official_trees_ha_t37": trees_ha_t37,
+        "official_trees_ha_t62": trees_ha_t62,
+        "best_model_t37_10cm_rmse": rmse_cfg_t37,
+        "best_model_t37_10cm_bias": bias_cfg_t37,
+        "best_model_t62_10cm_rmse": rmse_cfg_t62_10,
+        "best_model_t62_10cm_bias": bias_cfg_t62_10,
+        "summary": summary_rows,
     }
     json_path = os.path.join(EXP4_DIR, "exp4_summary.json")
     with open(json_path, "w") as f:
