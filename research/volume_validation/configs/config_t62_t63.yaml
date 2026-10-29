@@ -1,0 +1,54 @@
+# Configuration for Experiment 2: Intra-Clone Transferability (T62 -> T63 at 5cm)
+
+dataset:
+  excel_path: "/mnt/scratch/dataset/euc/canoa/IFPC-Canoas/Result_IFPC_Canoas.xlsx"
+  dados_ifpc_path: "/mnt/scratch/dataset/euc/canoa/IFPC-Canoas/Dados_IFPC_Canoas.xlsx"
+  talhao_t62_id: "062-063"
+  t62_area_ha: 25.96
+  t63_area_ha: 15.04
+  total_area_ha: 41.00
+  resolution: "5cm"
+  t62_plots: [500, 503, 508, 509]
+  t62_cloud_dir: "/mnt/scratch/dataset/euc/canoa/recortes/talhao62_plots_5cm"
+  t62_cloud_pattern: "parcela_{plot_id}/classified_cloud.laz"
+  t63_cloud_path: "/mnt/scratch/dataset/euc/canoa/recortes/samples_5cm/ff3d_full/classified_cloud.laz"
+
+qc:
+  min_tree_points: 40
+  min_stem_points: 15
+  min_height_ratio: 0.40
+  max_ground_offset: 2.50
+  max_stem_gap: 4.0
+  max_r90: 1.45
+
+enhancement:
+  kdtree_distance_thresh: 0.35
+  cylinder_dz_thresh: 0.80
+  cylinder_dxy_thresh: 0.30
+
+matching:
+  max_dist: 1.30
+  angle_step_deg: 3
+  translation_range: [-5.0, 5.0]
+  translation_steps: 21
+  height_penalty_weight: 0.20
+
+grid_search:
+  voxel:
+    voxel_sizes: [0.06, 0.07, 0.08, 0.09, 0.10]
+  axis_profile:
+    radius_percentiles: [15.0, 20.0, 25.0]
+    n_slices_list: [15, 20]
+    slice_thickness: 0.20
+    min_points_per_slice: 5
+  cylinder_ff:
+    form_factors: [0.35, 0.38, 0.40, 0.42, 0.45]
+  dbh:
+    method: "ensemble"
+    offset_range: 0.3
+    n_slices: 7
+    slice_thickness: 0.16
+    ransac_thresh: 0.02
+
+validation:
+  export_dir: "results/exp2_t62_t63"

@@ -1,0 +1,50 @@
+# Configuration for Experiment 3: Point Cloud Resolution Comparison (5cm vs 10cm on Talhão 62)
+
+dataset:
+  excel_path: "/mnt/scratch/dataset/euc/canoa/IFPC-Canoas/Result_IFPC_Canoas.xlsx"
+  talhao_id: "062-063"
+  plots: [500, 503, 508, 509]
+  t62_area_ha: 25.96
+  clouds_5cm_dir: "/mnt/scratch/dataset/euc/canoa/recortes/talhao62_plots_5cm"
+  clouds_10cm_dir: "/mnt/scratch/dataset/euc/canoa/recortes/talhao62_plots_10cm"
+  cloud_pattern: "parcela_{plot_id}/classified_cloud.laz"
+
+qc:
+  min_tree_points: 30
+  min_stem_points: 10
+  min_height_ratio: 0.40
+  max_ground_offset: 2.50
+  max_stem_gap: 4.5
+  max_r90: 1.45
+
+enhancement:
+  kdtree_distance_thresh: 0.35
+  cylinder_dz_thresh: 0.80
+  cylinder_dxy_thresh: 0.30
+
+matching:
+  max_dist: 1.30
+  angle_step_deg: 3
+  translation_range: [-5.0, 5.0]
+  translation_steps: 21
+  height_penalty_weight: 0.20
+
+grid_search:
+  voxel:
+    voxel_sizes: [0.06, 0.07, 0.08, 0.09, 0.10]
+  axis_profile:
+    radius_percentiles: [15.0, 20.0, 25.0]
+    n_slices_list: [15, 20]
+    slice_thickness: 0.20
+    min_points_per_slice: 5
+  cylinder_ff:
+    form_factors: [0.35, 0.38, 0.40, 0.42, 0.45]
+  dbh:
+    method: "ensemble"
+    offset_range: 0.3
+    n_slices: 7
+    slice_thickness: 0.16
+    ransac_thresh: 0.02
+
+validation:
+  export_dir: "results/exp3_resolution_5vs10cm"
