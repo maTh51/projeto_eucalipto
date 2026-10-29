@@ -33,23 +33,32 @@ from scipy.spatial.distance import cdist
 from scipy.optimize import linear_sum_assignment
 
 # Local module imports
-sys.path.append("/home/matheuspimenta/euc/projeto_eucalipto")
+sys.path.append("/mnt/scratch/keiller/projeto_eucalipto")
 from eucalipto.dbh_methods import estimate_dbh
 from eucalipto.volume_methods import estimate_volume
 
 EXCEL_PATH = "/mnt/scratch/dataset/euc/canoa/IFPC-Canoas/Result_IFPC_Canoas.xlsx"
-OUTPUT_DIR = "/home/matheuspimenta/euc/projeto_eucalipto/results/benchmarking_framework"
+OUTPUT_DIR = "/mnt/scratch/keiller/projeto_eucalipto/biometric_bench_output/sat_ff3d/"
+SEGMENTANYTREE = True
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 T62_PARCELAS = [500, 503, 508, 509]
-T62_CLOUDS = {
-    p: f"/home/matheuspimenta/euc/projeto_eucalipto/results/canoa/parcelas_t62/parcela_{p}/classified_cloud.laz"
+FF3D_T62_CLOUDS = {
+    p: f"/mnt/scratch/dataset/euc/canoa/results/ff3d/parcelas_t62/parcela_{p}/classified_cloud.laz"
+    for p in T62_PARCELAS
+}
+SEGMENT_ANY_TREE_T62_CLOUD_PATHS = {
+    p: f"/mnt/scratch/keiller/projeto_eucalipto_segmentanytree_outcomes/third_party/SegmentAnyTree/output/talhao_62_parcela_{p}_out.laz"
     for p in T62_PARCELAS
 }
 
 T37_PARCELAS = [594, 602, 611, 612, 621, 622, 623, 634, 635, 636, 648]
-T37_CLOUDS = {
-    p: f"/home/matheuspimenta/euc/projeto_eucalipto/results/canoa/parcelas_t37/parcela_{p}/classified_cloud.laz"
+FF3D_T37_CLOUDS = {
+    p: f"/mnt/scratch/dataset/euc/canoa/results/ff3d/parcelas_t37/parcela_{p}/classified_cloud.laz"
+    for p in T37_PARCELAS
+}
+SEGMENT_ANY_TREE_T37_CLOUD_PATHS = {
+    p: f"/mnt/scratch/keiller/projeto_eucalipto_segmentanytree_outcomes/third_party/SegmentAnyTree/output_t37/talhao_037_parcela_{p}_out.laz"
     for p in T37_PARCELAS
 }
 
@@ -57,13 +66,83 @@ T63_CLOUD = "/home/matheuspimenta/euc/projeto_eucalipto/results/canoa/parcelas_t
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 0. ALIGN FF3D AND SEGMENTANYTREE OUTPUTS
+# ══════════════════════════════════════════════════════════════════════════════
+def xyz(las):
+    return np.column_stack((las.x, las.y, las.z))
+
+def estimate_translation(src, ref_xyz, ref_tree, max_iter=30, tol=1e-4, sample=200_000, seed=0):
+    """Translation-only alignment: mean-difference first guess, then
+    iterative refinement with the median residual to nearest neighbors."""
+    t = ref_xyz.mean(0) - src.mean(0)
+    rng = np.random.default_rng(seed)
+    sub = src if len(src) <= sample else src[rng.choice(len(src), sample, replace=False)]
+    for _ in range(max_iter):
+        _, idx = ref_tree.query(sub + t)
+        step = np.median(ref_xyz[idx] - (sub + t), axis=0)
+        t = t + step
+        if np.abs(step).max() < tol:
+            break
+    return t
+
+def merge_ff_sat(ff_path, sat_path, out_path, max_dist=0.05, min_match=0.98,
+                 sat_field="PredInstance"):
+    ff, sat = laspy.read(ff_path), laspy.read(sat_path)
+    if sat_field not in sat.point_format.dimension_names:
+        raise KeyError(f"{sat_field} not in SAT file: {list(sat.point_format.dimension_names)}")
+
+    F, S = xyz(ff), xyz(sat)
+    print("points  FF3D / SAT:", len(F), len(S))
+    print("extent  FF3D / SAT:", np.ptp(F, 0), np.ptp(S, 0))
+
+    tree = cKDTree(S)
+    t = estimate_translation(F, S, tree)
+    print("translation applied to FF3D:", t)
+
+    # shift FF3D by editing the header offsets (stored integers and labels untouched)
+    Fa = F + t
+    ff.header.offsets = np.asarray(ff.header.offsets) + t
+    ff.update_header()
+    # Fa = xyz(ff)
+
+    # match every FF3D point to its nearest SAT point
+    d, idx = tree.query(Fa, distance_upper_bound=max_dist)
+    matched = np.isfinite(d)
+    frac = matched.mean()
+    print(f"matched within {max_dist} m: {frac:.4f}")
+    print("distance median / 95% / max:",
+          np.median(d[matched]), np.percentile(d[matched], 95), d[matched].max())
+    print("unique SAT points used:", len(np.unique(idx[matched])), "of", len(S))
+
+    if frac < min_match:
+        raise ValueError(f"Only {frac:.1%} of points matched; alignment is not a pure "
+                         "translation (or SAT was subsampled/cropped). File not written.")
+
+    sat_inst = np.asarray(sat[sat_field]).astype(np.int32)
+    inst = np.zeros(len(Fa), dtype=np.int32)
+    inst[matched] = sat_inst[idx[matched]]
+    dist = np.where(matched, d, -1).astype(np.float32)
+
+    # sanity: no SAT instance should disappear
+    n_in, n_out = len(np.unique(sat_inst[sat_inst > 0])), len(np.unique(inst[inst > 0]))
+    print(f"SAT instances: {n_in} in source, {n_out} in merged")
+
+    ff.add_extra_dim(laspy.ExtraBytesParams(name="sat_instance", type=np.int32))
+    ff.add_extra_dim(laspy.ExtraBytesParams(name="sat_dist", type=np.float32))
+    ff.sat_instance = inst
+    ff.sat_dist = dist
+    ff.write(out_path)
+    print("written:", out_path)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 1. DATA INGESTION
 # ══════════════════════════════════════════════════════════════════════════════
 def load_all_field_data(excel_path):
     print("[1/6] Loading official field inventory from Excel...")
-    df_covas = pd.read_excel(excel_path, sheet_name="Covas")
-    df_parc = pd.read_excel(excel_path, sheet_name="Parcelas")
-    df_tal = pd.read_excel(excel_path, sheet_name="Talhões")
+    df_covas = pd.read_excel(excel_path, sheet_name="Covas", engine='openpyxl')
+    df_parc = pd.read_excel(excel_path, sheet_name="Parcelas", engine='openpyxl')
+    df_tal = pd.read_excel(excel_path, sheet_name="Talhões", engine='openpyxl')
 
     # Process individual tree records
     df_trees = df_covas[df_covas["Fila"].notnull() & df_covas["Cova"].notnull()].copy()
@@ -97,7 +176,12 @@ def extract_and_enhance_trees(cloud_path, plot_id):
     las = laspy.read(cloud_path)
     pts = np.vstack((las.x, las.y, las.z)).T
     fields = list(las.point_format.dimension_names)
-    inst = (np.array(las.tree_id) if "tree_id" in fields else np.zeros(len(pts), dtype=np.int32)).copy()
+    if not SEGMENTANYTREE:
+        # only FF3D
+        inst = (np.array(las.tree_id) if "tree_id" in fields else np.zeros(len(pts), dtype=np.int32)).copy()
+    else:
+        # SegmentAnyTree (SAT) + FF3D
+        inst = (np.array(las.sat_instance) if "sat_instance" in fields else np.zeros(len(pts), dtype=np.int32)).copy()
     sem  = (np.array(las.trunk_leaf_label) if "trunk_leaf_label" in fields else np.ones(len(pts), dtype=np.int32))
 
     z_min_plot = pts[:, 2].min()
@@ -349,7 +433,7 @@ def run_dataset_benchmark(stand_name, talhao_key, clouds_dict, df_field_all, df_
     print(f"  -> Total matched trees with GT: {len(df_trees)}")
 
     if len(df_trees) == 0:
-        return None, None
+        return None, None, None
 
     # Get list of all volume configs evaluated
     cfg_cols = [c for c in df_trees.columns if c.startswith(("voxel_", "axis_", "cyl_"))]
@@ -552,12 +636,12 @@ def main():
 
     # ── RUN A: BASE TALHÃO 62 (5cm High Resolution Flight) ─────────────────────
     df_trees_t62, df_plots_t62, summary_t62 = run_dataset_benchmark(
-        "Talhão 62 (5cm)", "062-063", T62_CLOUDS, df_field_all, df_parc, df_tal
+        "Talhão 62 (5cm)", "062-063", FF3D_T62_CLOUDS, df_field_all, df_parc, df_tal
     )
 
     # ── RUN B: BASE TALHÃO 37 (10cm Sparse Resolution Flight) ───────────────────
     df_trees_t37, df_plots_t37, summary_t37 = run_dataset_benchmark(
-        "Talhão 37 (10cm)", 37, T37_CLOUDS, df_field_all, df_parc, df_tal
+        "Talhão 37 (10cm)", 37, FF3D_T37_CLOUDS, df_field_all, df_parc, df_tal
     )
 
     # Save detailed tree tables
@@ -576,11 +660,11 @@ def main():
     # Extrapolations
     extrap_base_t62 = run_cross_stand_extrapolations(
         "Base T62 (5cm)", summary_t62["best_global_config"], df_trees_t62, df_tal, df_parc,
-        T62_CLOUDS, T37_CLOUDS, T63_CLOUD
+        FF3D_T62_CLOUDS, FF3D_T37_CLOUDS, T63_CLOUD
     )
     extrap_base_t37 = run_cross_stand_extrapolations(
         "Base T37 (10cm)", summary_t37["best_global_config"], df_trees_t37, df_tal, df_parc,
-        T62_CLOUDS, T37_CLOUDS, T63_CLOUD
+        FF3D_T62_CLOUDS, FF3D_T37_CLOUDS, T63_CLOUD
     )
 
     df_extrap_combined = pd.concat([extrap_base_t62, extrap_base_t37], ignore_index=True)
@@ -606,4 +690,24 @@ def main():
 
 
 if __name__ == "__main__":
+    if SEGMENTANYTREE:
+        T62_MERGED_CLOUD_PATHS = {
+            p: os.path.join(OUTPUT_DIR, f"ff3d_sat_t62_p_{p}.laz")
+            for p in T62_PARCELAS
+        }
+        for plot_id, path in FF3D_T62_CLOUDS.items():
+            merge_ff_sat(path, SEGMENT_ANY_TREE_T62_CLOUD_PATHS[plot_id], T62_MERGED_CLOUD_PATHS[plot_id], max_dist=0.5)
+            
+        T37_MERGED_CLOUD_PATHS = {
+            p: os.path.join(OUTPUT_DIR, f"ff3d_sat_t37_p_{p}.laz")
+            for p in T37_PARCELAS
+        }
+        for plot_id, path in FF3D_T37_CLOUDS.items():
+            merge_ff_sat(path, SEGMENT_ANY_TREE_T37_CLOUD_PATHS[plot_id], T37_MERGED_CLOUD_PATHS[plot_id], max_dist=0.5)
+
+        FF3D_T62_CLOUDS = T62_MERGED_CLOUD_PATHS
+        FF3D_T37_CLOUDS = T37_MERGED_CLOUD_PATHS
+
+    print(FF3D_T62_CLOUDS)
+    print(FF3D_T37_CLOUDS)
     main()

@@ -132,6 +132,11 @@ def pipeline_default():
              base_config, checkpoint_dir, skip_convert=False, skip_eval=False, skip_merge=False)
 
 
+# python3 isolation_segmentanytree.py -i /mnt/scratch/dataset/euc/canoa/LiDAR/T37_10cm/parcelas/ 
+# -o /mnt/scratch/keiller/projeto_eucalipto_segmentanytree_outcomes/third_party/SegmentAnyTree/output_t37/ 
+# --base-config /mnt/scratch/keiller/projeto_eucalipto_segmentanytree_outcomes/third_party/SegmentAnyTree/conf/eval.yaml 
+# --checkpoint-dir /mnt/scratch/keiller/projeto_eucalipto_segmentanytree_outcomes/third_party/SegmentAnyTree/model_file/ 
+# --repo-dir /mnt/scratch/keiller/projeto_eucalipto_segmentanytree_outcomes/third_party/SegmentAnyTree/
 def main():
     args = parse_args()
 
